@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "DevNotes",
+  "version": "0.1.0",
+  "permissions": ["storage", "activeTab", "scripting"],
+  "host_permissions": ["<all_urls>"],
+  "action": { "default_title": "Open DevNotes" },
+  "background": { "service_worker": "serviceWorker.js" },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"]
+    }
+  ]
+}
