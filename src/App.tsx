@@ -7,16 +7,20 @@ type Note = { id: string; title: string; body: string; tags?: string[]; collecti
 type Revision = { id: string; title: string; body: string; savedAt: number }
 type PageNotes = Record<string, Note[]>
 type Collection = { id: string; name: string; createdAt: number }
-type Highlight = { id: string; noteId?: string; text: string; prefix: string; suffix: string; color: string; createdAt: number; shape?: 'marker' | 'underline' | 'box' | 'bracket'; display?: 'inline' | 'sticky'; stickyX?: number; stickyY?: number }
-type AnnotationPlacement = { item: Highlight; index: number; side: 'left' | 'right' | 'marker'; y: number; rect: DOMRect; note?: Note }
+type NotePlacement = { side: 'left' | 'right' | 'inline'; dx: number; dy: number }
+type Highlight = { id: string; noteId?: string; text: string; prefix: string; suffix: string; color: string; createdAt: number; shape?: 'marker' | 'underline' | 'box' | 'bracket'; display?: 'inline' | 'sticky'; placement?: NotePlacement; status?: 'attached' | 'orphan'; stickyX?: number; stickyY?: number }
+type PageTask = { id: string; text: string; done: boolean }
+type PageMeta = { status: 'to-read' | 'reading' | 'done'; whySaved: string; tasks: PageTask[]; journalEntry: string; updatedAt: number }
+type AnnotationPlacement = { item: Highlight; index: number; side: 'left' | 'right' | 'marker'; x: number; y: number; anchorX: number; anchorY: number; rect: { left: number; top: number; right: number; bottom: number; width: number; height: number }; note?: Note }
 type TrashEntry = { note: Note; url: string; deletedAt: number }
-type BackupFile = { format: 'devnotes-backup'; version: number; pages: PageNotes; collections: Collection[]; highlights: Record<string, Highlight[]>; trash: TrashEntry[]; settings?: DevNotesSettings }
+type BackupFile = { format: 'devnotes-backup'; version: number; pages: PageNotes; collections: Collection[]; highlights: Record<string, Highlight[]>; trash: TrashEntry[]; settings?: DevNotesSettings; pageMeta?: Record<string, PageMeta> }
 
 const STORAGE_KEY = 'devnotes-pages'
 const DELETED_KEY = 'devnotes-deleted-notes'
 const HIGHLIGHT_KEY = 'devnotes-highlights'
 const COLLECTION_KEY = 'devnotes-collections'
 const TRASH_KEY = 'devnotes-trash'
+const PAGEMETA_KEY = 'devnotes-pagemeta'
 const NOTE_TEMPLATES = {
   'Bug report': '# Bug report\n\n## Summary\n\n## Steps to reproduce\n1. \n\n## Expected behavior\n\n## Actual behavior\n\n## Environment\n',
   'Meeting notes': '# Meeting notes\n\nDate: \nAttendees: \n\n## Agenda\n\n## Notes\n\n## Decisions\n\n## Action items\n- [ ] \n',
@@ -87,7 +91,21 @@ function validateBackup(value: unknown): BackupFile | null {
     try {
       const normalizedUrl = normalizePageUrl(url)
       if (!/^https?:$/.test(new URL(normalizedUrl).protocol)) return null
-      normalizedHighlights[normalizedUrl] = (items as Highlight[]).filter((item) => item.text.length > 0 && item.text.length <= 5_000).map((item) => ({ ...item, color: ['#f6e58d', '#c8e6a0', '#b7dff2', '#f2c5d2'].includes(item.color) ? item.color : '#f6e58d', shape: ['marker', 'underline', 'box', 'bracket'].includes(item.shape ?? '') ? item.shape : 'marker', display: item.display === 'sticky' ? 'sticky' : 'inline', stickyX: Number.isFinite(item.stickyX) ? Math.max(6, Math.min(10_000, item.stickyX!)) : 20, stickyY: Number.isFinite(item.stickyY) ? Math.max(6, Math.min(10_000, item.stickyY!)) : 80 }))
+      normalizedHighlights[normalizedUrl] = (items as Highlight[]).filter((item) => item.text.length > 0 && item.text.length <= 5_000).map((item) => {
+        const placement: NotePlacement = item.placement && typeof item.placement.dx === 'number' && typeof item.placement.dy === 'number'
+          ? { side: item.placement.side === 'left' ? 'left' : 'right', dx: Math.round(item.placement.dx), dy: Math.round(item.placement.dy) }
+          : { side: 'right', dx: 24, dy: 0 }
+        return {
+          ...item,
+          color: ['#f6e58d', '#c8e6a0', '#b7dff2', '#f2c5d2'].includes(item.color) ? item.color : '#f6e58d',
+          shape: ['marker', 'underline', 'box', 'bracket'].includes(item.shape ?? '') ? item.shape : 'marker',
+          display: item.display === 'sticky' ? 'sticky' : 'inline',
+          placement,
+          status: item.status === 'orphan' ? 'orphan' : 'attached',
+          stickyX: undefined,
+          stickyY: undefined,
+        }
+      })
     } catch { return null }
   }
   const trash = value.trash === undefined ? [] : value.trash
@@ -208,10 +226,54 @@ function normalizeHighlights(value: unknown): Record<string, Highlight[]> {
   for (const [url, items] of Object.entries(value)) {
     try {
       const key = normalizePageUrl(url)
-      if (/^https?:$/.test(new URL(key).protocol) && Array.isArray(items)) normalized[key] = items.filter((item): item is Highlight => isRecord(item) && typeof item.id === 'string' && typeof item.text === 'string' && typeof item.prefix === 'string' && typeof item.suffix === 'string' && typeof item.color === 'string' && item.text.length <= 5_000)
+      if (/^https?:$/.test(new URL(key).protocol) && Array.isArray(items)) {
+        normalized[key] = items
+          .filter((item): item is Highlight => isRecord(item) && typeof item.id === 'string' && typeof item.text === 'string' && typeof item.prefix === 'string' && typeof item.suffix === 'string' && typeof item.color === 'string' && item.text.length <= 5_000)
+          .map((item) => {
+            const placement: NotePlacement = item.placement && typeof item.placement.dx === 'number' && typeof item.placement.dy === 'number'
+              ? { side: item.placement.side === 'left' ? 'left' : 'right', dx: Math.round(item.placement.dx), dy: Math.round(item.placement.dy) }
+              : { side: 'right', dx: 24, dy: 0 }
+            return {
+              ...item,
+              color: HIGHLIGHT_COLORS.includes(item.color as any) ? item.color : HIGHLIGHT_COLORS[0],
+              shape: ['marker', 'underline', 'box', 'bracket'].includes(item.shape ?? '') ? item.shape : 'marker',
+              display: item.display === 'sticky' ? 'sticky' : 'inline',
+              placement,
+              status: item.status === 'orphan' ? 'orphan' : 'attached',
+              stickyX: undefined,
+              stickyY: undefined,
+            }
+          })
+      }
     } catch { /* Skip malformed legacy anchors. */ }
   }
   return normalized
+}
+
+function readPageMeta(): Promise<Record<string, PageMeta>> {
+  return new Promise((resolve) => {
+    if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+      chrome.storage.local.get(PAGEMETA_KEY, (result) => resolve((result[PAGEMETA_KEY] as Record<string, PageMeta> | undefined) ?? {}))
+      return
+    }
+    if (typeof chrome !== 'undefined' && chrome.runtime) { resolve({}); return }
+    try { resolve(JSON.parse(localStorage.getItem(PAGEMETA_KEY) ?? '{}')) } catch { resolve({}) }
+  })
+}
+
+function writePageMeta(meta: Record<string, PageMeta>): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+      chrome.storage.local.set({ [PAGEMETA_KEY]: meta }, () => {
+        const error = chrome.runtime.lastError
+        if (error) reject(new Error(error.message))
+        else resolve()
+      })
+      return
+    }
+    if (typeof chrome !== 'undefined' && chrome.runtime) { reject(new Error('Chrome storage is unavailable.')); return }
+    try { localStorage.setItem(PAGEMETA_KEY, JSON.stringify(meta)); resolve() } catch (error) { reject(error) }
+  })
 }
 
 function readCollections(): Promise<Collection[]> {
@@ -402,12 +464,266 @@ function TagInput({ tags, onCommit }: { tags: string[]; onCommit: (tags: string[
   }} />
 }
 
-function StickyNote({ title, body, x, y, onMove, onOpen }: { title: string; body: string; x: number; y: number; onMove: (x: number, y: number) => void; onOpen: () => void }) {
+function getRangeFromPoint(x: number, y: number): Range | null {
+  if (typeof document.caretRangeFromPoint === 'function') {
+    return document.caretRangeFromPoint(x, y)
+  }
+  const doc = document as any
+  if (typeof doc.caretPositionFromPoint === 'function') {
+    const pos = doc.caretPositionFromPoint(x, y)
+    if (pos && pos.offsetNode) {
+      const range = document.createRange()
+      range.setStart(pos.offsetNode, pos.offset)
+      range.collapse(true)
+      return range
+    }
+  }
+  return null
+}
+
+function findNearestTextAnchor(clientX: number, clientY: number): { text: string; prefix: string; suffix: string; start: number; end: number } | null {
+  const range = getRangeFromPoint(clientX, clientY)
+  if (!range) return null
+  const nodes = pageTextNodes()
+  const pageText = nodes.map((node) => node.textContent ?? '').join('')
+  const offset = pageTextOffset(nodes, range.startContainer, range.startOffset)
+  if (offset < 0 || offset > pageText.length) return null
+
+  let start = Math.max(0, offset - 12)
+  let end = Math.min(pageText.length, offset + 28)
+  while (start > 0 && !/\s/.test(pageText[start - 1])) start--
+  while (end < pageText.length && !/\s/.test(pageText[end])) end++
+  const text = pageText.slice(start, end).trim()
+  if (!text) return null
+  start += pageText.slice(start, end).length - pageText.slice(start, end).trimStart().length
+  end = start + text.length
+  const prefix = pageText.slice(Math.max(0, start - 24), start)
+  const suffix = pageText.slice(end, Math.min(pageText.length, end + 24))
+  return { text, prefix, suffix, start, end }
+}
+
+function StickyNote({
+  title,
+  body,
+  x,
+  y,
+  anchorSnippet,
+  createdAt,
+  onMove,
+  onOpen,
+  onAddEntry,
+  onRemove,
+}: {
+  title: string
+  body: string
+  x: number
+  y: number
+  anchorSnippet?: string
+  createdAt?: number
+  onMove: (pageX: number, pageY: number) => void
+  onOpen: () => void
+  onAddEntry?: (text: string) => void
+  onRemove?: () => void
+}) {
   const dragOffset = useRef<{ x: number; y: number } | null>(null)
+  const [adding, setAdding] = useState(false)
+  const [draft, setDraft] = useState('')
+  const dateStr = createdAt ? new Date(createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : 'Today'
+
   return <section className="dn-sticky-note" style={{ left: x, top: y }} aria-label={`Sticky note: ${title}`}>
-    <header onPointerDown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); dragOffset.current = { x: event.clientX - x, y: event.clientY - y } }} onPointerMove={(event) => { if (dragOffset.current) onMove(Math.max(6, Math.min(window.innerWidth - 270, event.clientX - dragOffset.current.x)), Math.max(6, Math.min(window.innerHeight - 100, event.clientY - dragOffset.current.y))) }} onPointerUp={() => { dragOffset.current = null }} onPointerCancel={() => { dragOffset.current = null }}><span>STICKY NOTE · DRAG</span><strong>{title}</strong></header>
-    <p>{body.replace(/^>\s?/gm, '').trim().slice(0, 220)}</p><button onClick={onOpen}>Open note</button>
+    <div className="dn-sticky-tape" aria-hidden="true" />
+    <header
+      onPointerDown={(event) => {
+        event.preventDefault()
+        event.currentTarget.setPointerCapture(event.pointerId)
+        dragOffset.current = { x: event.pageX - x, y: event.pageY - y }
+      }}
+      onPointerMove={(event) => {
+        if (dragOffset.current) onMove(Math.max(8, event.pageX - dragOffset.current.x), Math.max(8, event.pageY - dragOffset.current.y))
+      }}
+      onPointerUp={() => { dragOffset.current = null }}
+      onPointerCancel={() => { dragOffset.current = null }}
+    >
+      <span>STICKY NOTE · DRAG</span>
+      <strong>{title}</strong>
+    </header>
+    <p>{body.replace(/^>\s?/gm, '').trim().slice(0, 240)}</p>
+    {anchorSnippet && (
+      <div className="dn-sticky-footer">
+        {dateStr} · anchored to “{anchorSnippet.slice(0, 30)}{anchorSnippet.length > 30 ? '…' : ''}”
+      </div>
+    )}
+    <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+      <button onClick={onOpen}>Open</button>
+      {onAddEntry && <button onClick={() => setAdding((v) => !v)}>{adding ? 'Cancel' : '＋ Add thought'}</button>}
+      {onRemove && <button onClick={onRemove} style={{ color: '#8d6259' }}>Delete</button>}
+    </div>
+    {adding && onAddEntry && (
+      <form
+        className="dn-inline-add"
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (draft.trim()) {
+            onAddEntry(draft.trim())
+            setDraft('')
+            setAdding(false)
+          }
+        }}
+      >
+        <input
+          autoFocus
+          placeholder="Add to this sticky…"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+        />
+      </form>
+    )}
   </section>
+}
+
+function InlineMarginCard({
+  item,
+  index,
+  side,
+  x,
+  y,
+  note,
+  penSet,
+  noteFont,
+  onOpen,
+  onAddEntry,
+  onToggleTask,
+  onChangeColor,
+  onRemove,
+}: {
+  item: Highlight
+  index: number
+  side: 'left' | 'right' | 'marker'
+  x: number
+  y: number
+  note?: Note
+  penSet: string
+  noteFont: string
+  onOpen: () => void
+  onAddEntry?: (text: string) => void
+  onToggleTask?: (taskIndex: number, done: boolean) => void
+  onChangeColor?: (color: string) => void
+  onRemove?: () => void
+}) {
+  const [draft, setDraft] = useState('')
+  const [isAdding, setIsAdding] = useState(false)
+  const body = note?.body ?? item.text
+
+  // Parse dated entries or markdown lines from body
+  const lines = body.split('\n').filter(Boolean)
+  const entries: { date?: string; text: string; isTask?: boolean; checked?: boolean; taskIndex?: number }[] = []
+  let taskCounter = 0
+
+  for (const line of lines) {
+    const taskMatch = line.match(/^[-*+]\s+\[([ xX])\]\s*(.*)$/)
+    if (taskMatch) {
+      entries.push({ text: taskMatch[2], isTask: true, checked: taskMatch[1].toLowerCase() === 'x', taskIndex: taskCounter++ })
+      continue
+    }
+    const dateMatch = line.match(/^\*\*([^*]+)\*\*\s*(.*)$/)
+    if (dateMatch) {
+      entries.push({ date: dateMatch[1], text: dateMatch[2] })
+      continue
+    }
+    if (!line.startsWith('>')) {
+      entries.push({ text: line })
+    }
+  }
+
+  return (
+    <div
+      className={`dn-margin-card dn-margin-${side} dn-pen-${penSet} dn-font-${noteFont}`}
+      style={{ left: x, top: y }}
+    >
+      <span
+        className="dn-margin-number"
+        onClick={() => {
+          if (onChangeColor) {
+            const nextColor = HIGHLIGHT_COLORS[(HIGHLIGHT_COLORS.indexOf(item.color as any) + 1) % HIGHLIGHT_COLORS.length]
+            onChangeColor(nextColor)
+          }
+        }}
+        title="Click to cycle highlight color"
+        style={{ cursor: 'pointer' }}
+      >
+        {index + 1}
+      </span>
+      <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
+        <strong onClick={onOpen} style={{ cursor: 'pointer' }}>{note?.title || 'Page note'}</strong>
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          {onAddEntry && (
+            <button
+              style={{ all: 'unset', cursor: 'pointer', fontSize: 10, color: '#65705a', padding: '2px 4px' }}
+              onClick={() => setIsAdding((v) => !v)}
+              title="Add dated entry or task"
+            >
+              {isAdding ? '✕' : '＋ Add'}
+            </button>
+          )}
+          {onRemove && (
+            <button
+              style={{ all: 'unset', cursor: 'pointer', fontSize: 12, color: '#8d6259', padding: '0 3px' }}
+              onClick={onRemove}
+              title="Remove annotation"
+            >
+              ×
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="dn-inline-journal">
+        {entries.slice(0, 4).map((entry, i) => (
+          entry.isTask ? (
+            <label key={i} className="dn-inline-task" onClick={(e) => e.stopPropagation()}>
+              <input
+                type="checkbox"
+                checked={entry.checked}
+                onChange={(e) => onToggleTask?.(entry.taskIndex ?? 0, e.target.checked)}
+              />
+              <span style={{ textDecoration: entry.checked ? 'line-through' : 'none', color: entry.checked ? '#8a8d82' : 'inherit' }}>
+                {entry.text.slice(0, 65)}
+              </span>
+            </label>
+          ) : (
+            <div key={i} className="dn-journal-entry">
+              {entry.date && <b className="dn-entry-date">{entry.date}</b>}
+              <span>{entry.text.slice(0, 75)}</span>
+            </div>
+          )
+        ))}
+        {entries.length === 0 && (
+          <span style={{ color: '#77796f', fontSize: 10 }}>{item.text.slice(0, 75)}</span>
+        )}
+      </div>
+
+      {isAdding && onAddEntry && (
+        <form
+          className="dn-inline-add"
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (draft.trim()) {
+              onAddEntry(draft.trim())
+              setDraft('')
+              setIsAdding(false)
+            }
+          }}
+        >
+          <input
+            autoFocus
+            placeholder="Add to this note (or [ ] task)…"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+          />
+        </form>
+      )}
+    </div>
+  )
 }
 
 type SearchQuery = { terms: string[]; tags: string[]; sites: string[]; flags: string[]; after?: number; before?: number }
@@ -481,6 +797,8 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   const [collectionDraft, setCollectionDraft] = useState('')
   const [blocklistDraft, setBlocklistDraft] = useState('')
   const [trash, setTrash] = useState<TrashEntry[]>([])
+  const [allPageMeta, setAllPageMeta] = useState<Record<string, PageMeta>>({})
+  const [newTaskDraft, setNewTaskDraft] = useState('')
   const [highlights, setHighlights] = useState<Highlight[]>([])
   const [selectionToolbar, setSelectionToolbar] = useState<{ x: number; y: number } | null>(null)
   const [annotationLayoutTick, setAnnotationLayoutTick] = useState(0)
@@ -547,6 +865,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
         if (retained.length !== items.length) void writeTrash(retained, saved.trashRetentionDays)
       })
     })
+    void readPageMeta().then((meta) => { if (active) setAllPageMeta(meta) })
     return () => { active = false }
   }, [])
 
@@ -828,10 +1147,39 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
 
   useEffect(() => {
     let frame = 0
-    const update = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(() => setAnnotationLayoutTick((tick) => tick + 1)) }
-    window.addEventListener('scroll', update, true)
-    window.addEventListener('resize', update)
-    return () => { cancelAnimationFrame(frame); window.removeEventListener('scroll', update, true); window.removeEventListener('resize', update) }
+    const scheduleRelayout = () => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => setAnnotationLayoutTick((tick) => tick + 1))
+    }
+    window.addEventListener('resize', scheduleRelayout)
+    let resizeObserver: ResizeObserver | null = null
+    if (typeof ResizeObserver !== 'undefined' && document.body) {
+      resizeObserver = new ResizeObserver(scheduleRelayout)
+      resizeObserver.observe(document.body)
+    }
+    if (document.fonts?.ready) {
+      void document.fonts.ready.then(scheduleRelayout)
+    }
+    const onImgLoad = (e: Event) => {
+      if (e.target instanceof HTMLImageElement) scheduleRelayout()
+    }
+    window.addEventListener('load', scheduleRelayout)
+    document.addEventListener('load', onImgLoad, true)
+    const onInnerScroll = (event: Event) => {
+      const target = event.target
+      if (target && target !== document && target !== document.documentElement && target !== document.body) {
+        scheduleRelayout()
+      }
+    }
+    document.addEventListener('scroll', onInnerScroll, true)
+    return () => {
+      cancelAnimationFrame(frame)
+      window.removeEventListener('resize', scheduleRelayout)
+      window.removeEventListener('load', scheduleRelayout)
+      document.removeEventListener('load', onImgLoad, true)
+      document.removeEventListener('scroll', onInnerScroll, true)
+      resizeObserver?.disconnect()
+    }
   }, [])
 
   useEffect(() => {
@@ -933,9 +1281,139 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     setHighlights((items) => items.map((item) => item.id === id ? { ...item, color } : item))
   }
 
-  const moveStickyNote = (id: string, x: number, y: number) => {
+  const moveStickyNote = (id: string, droppedPageX: number, droppedPageY: number) => {
     highlightsDirtyRef.current = true
-    setHighlights((items) => items.map((item) => item.id === id ? { ...item, stickyX: x, stickyY: y } : item))
+    const mark = document.querySelector<HTMLElement>(`[data-devnotes-highlight="${CSS.escape(id)}"]`)
+    const scrollX = window.pageXOffset ?? window.scrollX ?? 0
+    const scrollY = window.pageYOffset ?? window.scrollY ?? 0
+    let side: 'left' | 'right' = 'right'
+    let dx = 24
+    let dy = 0
+
+    if (mark) {
+      const r = mark.getBoundingClientRect()
+      const anchorLeft = r.left + scrollX
+      const anchorRight = r.right + scrollX
+      const anchorTop = r.top + scrollY
+      const anchorMidX = (anchorLeft + anchorRight) / 2
+      const noteMidX = droppedPageX + 130 // half of 260px width
+
+      if (noteMidX < anchorMidX) {
+        side = 'left'
+        dx = Math.max(8, Math.round(anchorLeft - (droppedPageX + 260)))
+      } else {
+        side = 'right'
+        dx = Math.max(8, Math.round(droppedPageX - anchorRight))
+      }
+      dy = Math.round(droppedPageY - anchorTop)
+    }
+
+    setHighlights((items) => items.map((item) => {
+      if (item.id !== id) return item
+      return {
+        ...item,
+        placement: { side, dx, dy },
+        stickyX: undefined,
+        stickyY: undefined,
+      }
+    }))
+  }
+
+  const addInlineEntryToNote = (noteId: string, entryText: string) => {
+    const note = selectedNotes.find((n) => n.id === noteId) || allNotes.find(({ note: n }) => n.id === noteId)?.note
+    if (!note) return
+    const now = new Date()
+    const dateStr = now.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+    const trimmed = entryText.trim()
+    let addition = ''
+    if (/^[-*+]\s+\[/.test(trimmed)) {
+      // already formatted as "- [ ] task" or "- [x] task"
+      addition = `\n${trimmed}`
+    } else if (trimmed.startsWith('[ ]') || trimmed.startsWith('[x]') || trimmed.startsWith('[X]')) {
+      // user typed "[ ] task text"
+      addition = `\n- ${trimmed}`
+    } else {
+      addition = `\n\n**${dateStr}** ${trimmed}`
+    }
+    const updatedBody = `${note.body.trim()}${addition}`
+    const noteUrl = selectedNotes.some((n) => n.id === noteId) ? selectedPageUrl : (allNotes.find(({ note: n }) => n.id === noteId)?.url ?? pageUrl)
+    persist({
+      ...pages,
+      [noteUrl]: (pages[noteUrl] ?? []).map((n) => n.id === noteId ? { ...n, body: updatedBody, updatedAt: Date.now() } : n),
+    })
+  }
+
+  const toggleInlineTask = (noteId: string, taskIndex: number, done: boolean) => {
+    const note = selectedNotes.find((n) => n.id === noteId) || allNotes.find(({ note: n }) => n.id === noteId)?.note
+    if (!note) return
+    let index = 0
+    const updatedBody = note.body.replace(/^(\s*[-*+]\s+\[)( |x|X)(\])/gm, (line, prefix: string, _state: string, suffix: string) => {
+      const current = index++
+      return current === taskIndex ? `${prefix}${done ? 'x' : ' '}${suffix}` : line
+    })
+    const noteUrl = selectedNotes.some((n) => n.id === noteId) ? selectedPageUrl : (allNotes.find(({ note: n }) => n.id === noteId)?.url ?? pageUrl)
+    persist({
+      ...pages,
+      [noteUrl]: (pages[noteUrl] ?? []).map((n) => n.id === noteId ? { ...n, body: updatedBody, updatedAt: Date.now() } : n),
+    })
+  }
+
+  const reattachHighlight = (highlightId: string) => {
+    const selection = window.getSelection()
+    if (!selection || selection.isCollapsed || !selection.toString().trim() || !selection.rangeCount) {
+      window.alert('Select the text passage in the page first, then click Reattach.')
+      return
+    }
+    const range = selection.getRangeAt(0)
+    const nodes = pageTextNodes()
+    const pageText = nodes.map((node) => node.textContent ?? '').join('')
+    let start = pageTextOffset(nodes, range.startContainer, range.startOffset)
+    let end = pageTextOffset(nodes, range.endContainer, range.endOffset)
+    const selectedText = pageText.slice(start, end)
+    const text = selectedText.trim()
+    if (!text) return
+    start += selectedText.length - selectedText.trimStart().length
+    end = start + text.length
+    const prefix = pageText.slice(Math.max(0, start - 24), start)
+    const suffix = pageText.slice(end, Math.min(pageText.length, end + 24))
+
+    const updated = highlights.map((item) => {
+      if (item.id !== highlightId) return item
+      return {
+        ...item,
+        text,
+        prefix,
+        suffix,
+        status: 'attached' as const,
+        placement: { side: 'right' as const, dx: 24, dy: 0 },
+      }
+    })
+
+    clearPageHighlights()
+    wrapTextOffsets(nodes, start, end, highlightId, updated.find((h) => h.id === highlightId)?.color ?? '#f6e58d')
+    highlightsDirtyRef.current = true
+    setHighlights(updated)
+    setOrphanedHighlights((prev) => prev.filter((id) => id !== highlightId))
+    setAnnotationLayoutTick((t) => t + 1)
+  }
+
+  const updatePageMeta = (patch: Partial<PageMeta>) => {
+    const current = allPageMeta[pageUrl] ?? { status: 'reading', whySaved: '', tasks: [], journalEntry: '', updatedAt: Date.now() }
+    const nextMeta: PageMeta = { ...current, ...patch, updatedAt: Date.now() }
+    const updatedAll = { ...allPageMeta, [pageUrl]: nextMeta }
+    setAllPageMeta(updatedAll)
+    void writePageMeta(updatedAll)
+  }
+
+  const addPageTask = (text: string) => {
+    const current = allPageMeta[pageUrl] ?? { status: 'reading', whySaved: '', tasks: [], journalEntry: '', updatedAt: Date.now() }
+    const newTask: PageTask = { id: crypto.randomUUID(), text, done: false }
+    updatePageMeta({ tasks: [...current.tasks, newTask] })
+  }
+
+  const togglePageTask = (taskId: string, done: boolean) => {
+    const current = allPageMeta[pageUrl] ?? { status: 'reading', whySaved: '', tasks: [], journalEntry: '', updatedAt: Date.now() }
+    updatePageMeta({ tasks: current.tasks.map((t) => t.id === taskId ? { ...t, done } : t) })
   }
 
   const removeHighlight = (id: string) => {
@@ -960,7 +1438,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   }
 
   const exportJSON = async () => {
-    const backup = { format: 'devnotes-backup', version: 1, exportedAt: new Date().toISOString(), pages, collections, highlights: await readHighlights(), trash, settings }
+    const backup: BackupFile = { format: 'devnotes-backup', version: 1, pages, collections, highlights: await readHighlights(), trash, settings, pageMeta: allPageMeta }
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json;charset=utf-8' })
     const link = document.createElement('a')
     link.href = URL.createObjectURL(blob)
@@ -979,6 +1457,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       const importedSettings = backup.settings ?? settings
       const importedTrash = boundedTrash(backup.trash, importedSettings.trashRetentionDays)
       const importedHighlights = backup.highlights
+      const importedPageMeta = backup.pageMeta ?? {}
       clearPageHighlights()
       setPages(importedPages)
       pagesVersionRef.current += 1
@@ -986,6 +1465,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       setCollections(importedCollections)
       setTrash(importedTrash)
       setSettings(importedSettings)
+      setAllPageMeta(importedPageMeta)
       settingsVersionRef.current += 1
       settingsDirtyRef.current = false
       setHighlights(importedHighlights[pageUrl] ?? [])
@@ -998,7 +1478,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       collectionsDirtyRef.current = false
       highlightsDirtyRef.current = false
       if (typeof chrome !== 'undefined' && chrome.storage?.local) {
-        await new Promise<void>((resolve, reject) => chrome.storage.local.set({ [STORAGE_KEY]: importedPages, [DELETED_KEY]: {}, [COLLECTION_KEY]: importedCollections, [TRASH_KEY]: importedTrash, [HIGHLIGHT_KEY]: importedHighlights, [SETTINGS_KEY]: importedSettings }, () => chrome.runtime.lastError ? reject(new Error(chrome.runtime.lastError.message)) : resolve()))
+        await new Promise<void>((resolve, reject) => chrome.storage.local.set({ [STORAGE_KEY]: importedPages, [DELETED_KEY]: {}, [COLLECTION_KEY]: importedCollections, [TRASH_KEY]: importedTrash, [HIGHLIGHT_KEY]: importedHighlights, [SETTINGS_KEY]: importedSettings, [PAGEMETA_KEY]: importedPageMeta }, () => chrome.runtime.lastError ? reject(new Error(chrome.runtime.lastError.message)) : resolve()))
       } else if (typeof chrome !== 'undefined' && chrome.runtime) {
         throw new Error('Chrome storage is unavailable.')
       } else {
@@ -1008,6 +1488,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
         localStorage.setItem(TRASH_KEY, JSON.stringify(importedTrash))
         localStorage.setItem(HIGHLIGHT_KEY, JSON.stringify(importedHighlights))
         localStorage.setItem(SETTINGS_KEY, JSON.stringify(importedSettings))
+        localStorage.setItem(PAGEMETA_KEY, JSON.stringify(importedPageMeta))
       }
       setOrphanedHighlights(applyHighlights(importedHighlights[pageUrl] ?? []))
       setImportError('Backup restored.')
@@ -1016,30 +1497,68 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
 
   const captureSelection = useCallback((action: 'note' | 'quote' | 'link' | 'sticky' = 'note', color = settings.highlightColor) => {
     const selection = window.getSelection()
-    if (!selection?.toString().trim() || !selection.rangeCount) { createNote(); return }
-    const range = selection.getRangeAt(0)
+    let text = ''
+    let prefix = ''
+    let suffix = ''
+    let start = 0
+    let end = 0
     const nodes = pageTextNodes()
     const pageText = nodes.map((node) => node.textContent ?? '').join('')
-    let start = pageTextOffset(nodes, range.startContainer, range.startOffset)
-    let end = pageTextOffset(nodes, range.endContainer, range.endOffset)
-    const selectedText = pageText.slice(start, end)
-    const text = selectedText.trim()
-    if (!text) { createNote(); return }
-    start += selectedText.length - selectedText.trimStart().length
-    end = start + text.length
-    const item: Highlight = {
-      id: crypto.randomUUID(), text,
-      prefix: pageText.slice(Math.max(0, start - 24), start),
-      suffix: pageText.slice(start + text.length, start + text.length + 24),
-      color, createdAt: Date.now(), shape: settings.highlightStyle, display: action === 'sticky' ? 'sticky' : 'inline',
-      stickyX: Math.max(8, Math.min(window.innerWidth - 270, range.getBoundingClientRect().right + 16)),
-      stickyY: Math.max(8, Math.min(window.innerHeight - 170, range.getBoundingClientRect().top)),
+
+    if (selection && !selection.isCollapsed && selection.rangeCount > 0 && selection.toString().trim()) {
+      const range = selection.getRangeAt(0)
+      start = pageTextOffset(nodes, range.startContainer, range.startOffset)
+      end = pageTextOffset(nodes, range.endContainer, range.endOffset)
+      const selectedText = pageText.slice(start, end)
+      text = selectedText.trim()
+      if (text) {
+        start += selectedText.length - selectedText.trimStart().length
+        end = start + text.length
+        prefix = pageText.slice(Math.max(0, start - 24), start)
+        suffix = pageText.slice(end, Math.min(pageText.length, end + 24))
+      }
     }
+
+    // Step 3: Anchor free placement too if sticky dropped on empty space
+    if (!text && action === 'sticky') {
+      const anchor = findNearestTextAnchor(window.innerWidth / 2, window.innerHeight / 3)
+      if (anchor) {
+        text = anchor.text
+        prefix = anchor.prefix
+        suffix = anchor.suffix
+        start = anchor.start
+        end = anchor.end
+      }
+    }
+
+    if (!text) { createNote(); return }
+
+    const item: Highlight = {
+      id: crypto.randomUUID(),
+      text,
+      prefix,
+      suffix,
+      color,
+      createdAt: Date.now(),
+      shape: settings.highlightStyle,
+      display: action === 'sticky' ? 'sticky' : 'inline',
+      placement: { side: 'right', dx: 24, dy: 0 },
+      status: 'attached',
+    }
+
     wrapTextOffsets(nodes, start, end, item.id, item.color, item.shape, highlights.length + 1)
     const quoteJump = `${pageUrl}#:~:text=${encodeURIComponent(text.slice(0, 120))}`
     const linkedUrl = action === 'link' ? window.prompt('Link this annotation to a URL:', pageUrl) : null
-    if (action === 'link' && !linkedUrl) { document.querySelectorAll<HTMLElement>(`[data-devnotes-highlight="${CSS.escape(item.id)}"]`).forEach((mark) => mark.replaceWith(...Array.from(mark.childNodes))); return }
-    const body = action === 'note' || action === 'sticky' ? `> ${text}\n\nSource: [Open the original passage](${quoteJump})\n\n` : action === 'quote' ? `> ${text}\n\n— [${pageTitle}](${quoteJump})\n\n` : `> ${text}\n\nRelated link: [${linkedUrl}](${linkedUrl})\n\nSource: [${pageTitle}](${quoteJump})\n\n`
+    if (action === 'link' && !linkedUrl) {
+      document.querySelectorAll<HTMLElement>(`[data-devnotes-highlight="${CSS.escape(item.id)}"]`).forEach((mark) => mark.replaceWith(...Array.from(mark.childNodes)))
+      return
+    }
+    const body = action === 'note' || action === 'sticky'
+      ? `> ${text}\n\nSource: [Open the original passage](${quoteJump})\n\n`
+      : action === 'quote'
+        ? `> ${text}\n\n— [${pageTitle}](${quoteJump})\n\n`
+        : `> ${text}\n\nRelated link: [${linkedUrl}](${linkedUrl})\n\nSource: [${pageTitle}](${quoteJump})\n\n`
+
     item.noteId = createNote(body, action === 'quote' ? `Quote: ${text.slice(0, 48)}` : action === 'link' ? `Link: ${text.slice(0, 48)}` : '')
     const next = [...highlights, item]
     highlightsDirtyRef.current = true
@@ -1076,28 +1595,213 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
 
   const annotationPlacements = useMemo<AnnotationPlacement[]>(() => {
     void annotationLayoutTick
-    return highlights.reduce<{ placements: AnnotationPlacement[]; lastBottom: number }>((result, item, index) => {
+    if (!document.body) return []
+
+    const scrollX = window.pageXOffset ?? window.scrollX ?? 0
+    const scrollY = window.pageYOffset ?? window.scrollY ?? 0
+    const pageWidth = document.documentElement.clientWidth || window.innerWidth
+
+    type AttachedItem = {
+      item: Highlight
+      index: number
+      rect: { left: number; top: number; right: number; bottom: number; width: number; height: number }
+      note?: Note
+    }
+
+    const attached: AttachedItem[] = []
+    for (let index = 0; index < highlights.length; index++) {
+      const item = highlights[index]
       const mark = document.querySelector<HTMLElement>(`[data-devnotes-highlight="${CSS.escape(item.id)}"]`)
-      if (!mark) return result
-      const rect = mark.getBoundingClientRect()
-      if (item.display === 'sticky') return { ...result, placements: [...result.placements, { item, index, side: 'marker', y: rect.top + rect.height / 2, rect, note: allNotes.find(({ note }) => note.id === item.noteId)?.note }] }
-      const rightSpace = window.innerWidth - rect.right
+      if (!mark) continue
+      const r = mark.getBoundingClientRect()
+      attached.push({
+        item,
+        index,
+        rect: {
+          left: r.left + scrollX,
+          top: r.top + scrollY,
+          right: r.right + scrollX,
+          bottom: r.bottom + scrollY,
+          width: r.width,
+          height: r.height,
+        },
+        note: allNotes.find(({ note }) => note.id === item.noteId)?.note,
+      })
+    }
+
+    // Step 5: Stack notes in page space (sort top-to-bottom by anchor)
+    attached.sort((a, b) => a.rect.top - b.rect.top)
+
+    let rightLastBottom = 16
+    let leftLastBottom = 16
+    const placements: AnnotationPlacement[] = []
+
+    for (const entry of attached) {
+      const { item, index, rect, note } = entry
+      const anchorCenterY = rect.top + rect.height / 2
+
+      if (item.display === 'sticky') {
+        const side = item.placement?.side ?? 'right'
+        const dx = item.placement?.dx ?? 24
+        const dy = item.placement?.dy ?? -10
+        const width = 260
+        const x = side === 'left' ? Math.max(12, rect.left - width - dx) : Math.min(pageWidth - width - 12, rect.right + dx)
+        const y = rect.top + dy
+        placements.push({
+          item,
+          index,
+          side: 'marker',
+          x,
+          y,
+          anchorX: side === 'left' ? rect.left : rect.right,
+          anchorY: anchorCenterY,
+          rect,
+          note,
+        })
+        continue
+      }
+
+      // Margin cards vs inline
+      const rightSpace = pageWidth - rect.right
       const leftSpace = rect.left
-      const roomForCard = result.lastBottom + 10 <= window.innerHeight - 110
-      const side: AnnotationPlacement['side'] = window.innerWidth < 900 || !roomForCard ? 'marker' : rightSpace >= 255 ? 'right' : leftSpace >= 255 ? 'left' : 'marker'
-      if (side === 'marker') return { ...result, placements: [...result.placements, { item, index, side, y: rect.top + rect.height / 2, rect, note: allNotes.find(({ note }) => note.id === item.noteId)?.note }] }
-      const y = Math.min(window.innerHeight - 116, Math.max(rect.top + rect.height / 2, result.lastBottom + 10, 54))
-      return { placements: [...result.placements, { item, index, side, y, rect, note: allNotes.find(({ note }) => note.id === item.noteId)?.note }], lastBottom: y + 105 }
-    }, { placements: [], lastBottom: 14 }).placements
+      const canFitRight = rightSpace >= 280
+      const canFitLeft = leftSpace >= 280
+
+      let side: 'left' | 'right' | 'marker' = 'marker'
+      if (pageWidth >= 900) {
+        if (canFitRight) side = 'right'
+        else if (canFitLeft) side = 'left'
+      }
+
+      if (side === 'marker') {
+        const x = Math.max(12, Math.min(pageWidth - 280, rect.left))
+        const y = rect.bottom + 8
+        placements.push({ item, index, side: 'marker', x, y, anchorX: rect.left, anchorY: rect.bottom, rect, note })
+      } else {
+        const isRight = side === 'right'
+        const lastBottom = isRight ? rightLastBottom : leftLastBottom
+        const desiredY = Math.max(anchorCenterY - 24, lastBottom + 12)
+        const y = desiredY
+        if (isRight) rightLastBottom = y + 110
+        else leftLastBottom = y + 110
+
+        const x = isRight ? rect.right + 20 : rect.left - 280
+        placements.push({
+          item,
+          index,
+          side,
+          x,
+          y,
+          anchorX: isRight ? rect.right : rect.left,
+          anchorY: anchorCenterY,
+          rect,
+          note,
+        })
+      }
+    }
+
+    return placements
   }, [allNotes, annotationLayoutTick, highlights])
 
+  const currentPageMeta = allPageMeta[pageUrl] ?? { status: 'reading', whySaved: '', tasks: [], journalEntry: '', updatedAt: 0 }
+  const pageTasks = currentPageMeta.tasks ?? []
+  const openTasksCount = pageTasks.filter((t) => !t.done).length
+  const todayJournalSnippet = currentPageMeta.journalEntry || `${highlights.length} annotation${highlights.length === 1 ? '' : 's'} on this page.`
+  const [todayDateStr] = useState(() => new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }).toUpperCase())
+  const pageRelatedNotes = useMemo(() => {
+    const currentTags = new Set((notes.flatMap((n) => n.tags ?? [])))
+    return allNotes.filter(({ url, note }) => {
+      if (url === pageUrl) return false
+      const hasMatchingTag = (note.tags ?? []).some((t) => currentTags.has(t))
+      const hasMatchingHost = safeHostname(url) === hostname
+      return hasMatchingTag || hasMatchingHost
+    }).slice(0, 4)
+  }, [allNotes, notes, pageUrl, hostname])
+
   return <>
-    {selectionToolbar && <div className="dn-selection-toolbar" style={{ left: selectionToolbar.x, top: selectionToolbar.y }} onMouseDown={(event) => event.preventDefault()} aria-label="Text annotation tools">{HIGHLIGHT_COLORS.map((color) => <button key={color} className="dn-toolbar-color" aria-label={`Highlight with ${color}`} title={`Highlight with ${color}`} style={{ background: color }} onClick={() => { captureSelection('note', color); setSelectionToolbar(null) }} />)}<span className="dn-toolbar-divider"/><button onClick={() => { captureSelection('note'); setSelectionToolbar(null) }}>Comment</button><button onClick={() => { captureSelection('sticky'); setSelectionToolbar(null) }}>Sticky note</button><button onClick={() => { captureSelection('quote'); setSelectionToolbar(null) }}>Quote</button><button onClick={() => { captureSelection('link'); setSelectionToolbar(null) }}>Link</button></div>}
-    {highlights.filter((item) => item.display === 'sticky').map((item) => { const note = allNotes.find(({ note: candidate }) => candidate.id === item.noteId)?.note; if (!note) return null; return <StickyNote key={item.id} title={note.title || 'Sticky note'} body={note.body} x={item.stickyX ?? 20} y={item.stickyY ?? 80} onMove={(x, y) => moveStickyNote(item.id, x, y)} onOpen={() => { setOpen(true); setSelectedPageUrl(pageUrl); setSelectedId(note.id) }} /> })}
-    {!open && annotationPlacements.filter(({ side, item }) => side === 'marker' && item.display !== 'sticky').map(({ item, rect, index, note }) => note ? <button key={item.id} className="dn-inline-note" style={{ left: Math.max(8, Math.min(window.innerWidth - 230, rect.left)), top: Math.max(8, Math.min(window.innerHeight - 104, rect.bottom + 8)) }} onClick={() => { setOpen(true); setSelectedPageUrl(pageUrl); setSelectedId(note.id) }}><span>NOTE {index + 1}</span><strong>{note.title || 'Page note'}</strong><small>{note.body.replace(/^>\s?/gm, '').trim().slice(0, 88)}</small></button> : null)}
-    <div className="dn-annotation-rail" aria-label="Page annotations">{annotationPlacements.map(({ item, index, rect }) => <button key={item.id} style={{ top: Math.max(4, Math.min(window.innerHeight - 14, rect.top + rect.height / 2)) }} title={`Jump to annotation ${index + 1}`} aria-label={`Jump to annotation ${index + 1}`} onClick={() => document.querySelector<HTMLElement>(`[data-devnotes-highlight="${CSS.escape(item.id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>{index + 1}</button>)}</div>
-    {!open && <><svg className="dn-annotation-connectors" aria-hidden="true">{annotationPlacements.filter(({ side }) => side !== 'marker').map(({ item, side, rect, y }) => { const cardX = side === 'right' ? rect.right + 18 : rect.left - 238; const startX = side === 'right' ? rect.right : rect.left; const endX = side === 'right' ? cardX : cardX + 220; return <path key={item.id} d={`M ${startX} ${rect.top + rect.height / 2} C ${(startX + endX) / 2} ${rect.top + rect.height / 2}, ${(startX + endX) / 2} ${y + 47}, ${endX} ${y + 47}`} /> })}</svg>{annotationPlacements.filter(({ side }) => side !== 'marker').map(({ item, index, side, rect, y, note }) => <button key={item.id} className={`dn-margin-card dn-margin-${side} dn-pen-${settings.penSet} dn-font-${settings.noteFont}`} style={{ left: side === 'right' ? rect.right + 18 : rect.left - 238, top: y }} onClick={() => { if (item.noteId) { setOpen(true); setSelectedPageUrl(pageUrl); setSelectedId(item.noteId) } }}><span className="dn-margin-number">{index + 1}</span><strong>{note?.title || 'Page note'}</strong><span>{note?.body.trim().replace(/^>\s?/gm, '').slice(0, 76) || item.text.slice(0, 76)}{(note?.body.length ?? item.text.length) > 76 ? '…' : ''}</span></button>)}</>}
+    {selectionToolbar && <div className="dn-selection-toolbar" style={{ left: selectionToolbar.x, top: selectionToolbar.y }} onMouseDown={(event) => event.preventDefault()} aria-label="Text annotation tools">{HIGHLIGHT_COLORS.map((color) => <button key={color} className="dn-toolbar-color" aria-label={`Highlight with ${color}`} title={`Highlight with ${color}`} style={{ background: color }} onClick={() => { captureSelection('note', color); setSelectionToolbar(null) }} />)}<span className="dn-toolbar-divider" /><button onClick={() => { captureSelection('note'); setSelectionToolbar(null) }}>Comment</button><button onClick={() => { captureSelection('sticky'); setSelectionToolbar(null) }}>Sticky note</button><button onClick={() => { captureSelection('quote'); setSelectionToolbar(null) }}>Quote</button><button onClick={() => { captureSelection('link'); setSelectionToolbar(null) }}>Link</button></div>}
+
+    {/* In-page annotations layer: anchored in document space, moves naturally with document scrolling */}
+    <div className="dn-page-layer">
+      {/* Sticky Notes */}
+      {highlights.filter((item) => item.display === 'sticky').map((item) => {
+        const placement = annotationPlacements.find((p) => p.item.id === item.id)
+        const note = allNotes.find(({ note: candidate }) => candidate.id === item.noteId)?.note
+        if (!note || !placement) return null
+        return <StickyNote
+          key={item.id}
+          title={note.title || 'Sticky note'}
+          body={note.body}
+          x={placement.x}
+          y={placement.y}
+          anchorSnippet={item.text}
+          createdAt={item.createdAt}
+          onMove={(x, y) => moveStickyNote(item.id, x, y)}
+          onOpen={() => { setOpen(true); setSelectedPageUrl(pageUrl); setSelectedId(note.id) }}
+          onAddEntry={(text) => addInlineEntryToNote(note.id, text)}
+          onRemove={() => removeHighlight(item.id)}
+        />
+      })}
+
+      {/* Dotted Connectors — absolute in page space, full document height */}
+      {!open && (
+        <svg
+          className="dn-annotation-connectors"
+          aria-hidden="true"
+          style={{ height: Math.max(document.documentElement.scrollHeight, document.documentElement.clientHeight) }}
+        >
+          {annotationPlacements.filter(({ side, item }) => side !== 'marker' || item.display === 'sticky').map(({ item, side, anchorX, anchorY, x, y }) => {
+            const isRight = side === 'right' || (item.display === 'sticky' && (item.placement?.side ?? 'right') === 'right')
+            const endX = isRight ? x : x + 260
+            const endY = y + 36
+            return (
+              <g key={item.id}>
+                <circle cx={anchorX} cy={anchorY} r="3" />
+                <path d={`M ${anchorX} ${anchorY} C ${(anchorX + endX) / 2} ${anchorY}, ${(anchorX + endX) / 2} ${endY}, ${endX} ${endY}`} />
+              </g>
+            )
+          })}
+        </svg>
+      )}
+
+      {/* Inline and Margin Cards */}
+      {!open && annotationPlacements.filter(({ item }) => item.display !== 'sticky').map(({ item, index, side, x, y, note }) => (
+        <InlineMarginCard
+          key={item.id}
+          item={item}
+          index={index}
+          side={side}
+          x={x}
+          y={y}
+          note={note}
+          penSet={settings.penSet}
+          noteFont={settings.noteFont}
+          onOpen={() => { if (item.noteId) { setOpen(true); setSelectedPageUrl(pageUrl); setSelectedId(item.noteId) } }}
+          onAddEntry={(text) => { if (item.noteId) addInlineEntryToNote(item.noteId, text) }}
+          onToggleTask={(taskIndex, done) => { if (item.noteId) toggleInlineTask(item.noteId, taskIndex, done) }}
+          onChangeColor={(color) => changeHighlightColor(item.id, color)}
+          onRemove={() => removeHighlight(item.id)}
+        />
+      ))}
+    </div>
+
+    {/* Fixed rail minimap */}
+    <div className="dn-annotation-rail" aria-label="Page annotations">
+      {annotationPlacements.map(({ item, index, rect }) => (
+        <button
+          key={item.id}
+          style={{ top: Math.max(4, Math.min(window.innerHeight - 14, rect.top - (window.pageYOffset ?? window.scrollY ?? 0) + rect.height / 2)) }}
+          title={`Jump to annotation ${index + 1}`}
+          aria-label={`Jump to annotation ${index + 1}`}
+          onClick={() => document.querySelector<HTMLElement>(`[data-devnotes-highlight="${CSS.escape(item.id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+        >
+          {index + 1}
+        </button>
+      ))}
+    </div>
+
     {!open && !settings.hideLauncher && <button className={`dn-launcher ${settings.launcherPosition === 'bottom-left' ? 'dn-launcher-left' : ''}`} onClick={() => setOpen(true)} aria-label="Open DevNotes" title="DevNotes"><span className="dn-mark">d<span>.</span></span></button>}
+
     <aside className={`dn-panel dn-paper-${settings.paperTone} dn-font-${settings.noteFont} ${libraryOpen ? 'dn-library-open' : 'dn-page-view'} ${open ? 'is-open' : ''} ${settings.panelSide === 'left' ? 'dn-panel-left' : ''} ${darkTheme || settings.paperTone === 'night' ? 'dn-dark' : ''}`} style={{ width: `min(${settings.panelWidth}px, 100vw)`, left: settings.panelSide === 'left' ? 0 : 'auto', right: settings.panelSide === 'right' ? 0 : 'auto' }} aria-label="DevNotes panel" aria-hidden={!open}>
       <header className="dn-header">
         <div className="dn-brand"><span className="dn-brand-icon">d<span>.</span></span><span>devnotes</span></div>
@@ -1108,21 +1812,162 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
         <button className="dn-icon-button" onClick={() => setSettingsOpen(true)} aria-label="Open DevNotes settings" title="Settings">⚙</button>
         <button className="dn-icon-button" onClick={() => setOpen(false)} aria-label="Close panel">×</button>
       </header>
+
       {settingsOpen && <section className="dn-settings" role="dialog" aria-label="DevNotes settings"><div className="dn-settings-heading"><div><strong>Settings</strong><span>Preferences are stored on this device.</span></div><button className="dn-icon-button" onClick={() => setSettingsOpen(false)} aria-label="Close settings">×</button></div><div className="dn-settings-content"><label>Theme<select value={settings.theme} onChange={(event) => updateSettings({ theme: event.target.value as DevNotesSettings['theme'] })}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label><label>Panel side<select value={settings.panelSide} onChange={(event) => updateSettings({ panelSide: event.target.value as DevNotesSettings['panelSide'] })}><option value="right">Right</option><option value="left">Left</option></select></label><label>Panel width <span>{settings.panelWidth}px</span><input type="range" min="360" max="720" step="10" value={settings.panelWidth} onChange={(event) => updateSettings({ panelWidth: Number(event.target.value) })} /></label><label>Launcher position<select value={settings.launcherPosition} onChange={(event) => updateSettings({ launcherPosition: event.target.value as DevNotesSettings['launcherPosition'] })}><option value="bottom-right">Bottom right</option><option value="bottom-left">Bottom left</option></select></label><label className="dn-settings-check"><input type="checkbox" checked={settings.hideLauncher} onChange={(event) => updateSettings({ hideLauncher: event.target.checked })} />Hide the floating launcher</label><fieldset><legend>Default highlight color</legend><div className="dn-setting-colors">{HIGHLIGHT_COLORS.map((color) => <button key={color} type="button" className={settings.highlightColor === color ? 'selected' : ''} style={{ background: color }} aria-label={`Use highlight color ${color}`} onClick={() => updateSettings({ highlightColor: color })} />)}</div></fieldset><label>Trash retention <span>{settings.trashRetentionDays} days</span><input type="range" min="30" max="3650" step="30" value={settings.trashRetentionDays} onChange={(event) => updateSettings({ trashRetentionDays: Number(event.target.value) })} /></label><label>Version history <span>{settings.historyDepth} versions</span><input type="range" min="1" max="100" value={settings.historyDepth} onChange={(event) => updateSettings({ historyDepth: Number(event.target.value) })} /></label><div className="dn-site-settings"><strong>This site · {hostname}</strong><button onClick={() => void disableOnThisSite()}>Disable DevNotes on this site</button></div><form className="dn-blocklist-add" onSubmit={(event) => { event.preventDefault(); addBlockedHost(blocklistDraft); setBlocklistDraft('') }}><label htmlFor="dn-block-host">Block another site</label><div><input id="dn-block-host" value={blocklistDraft} onChange={(event) => setBlocklistDraft(event.target.value)} placeholder="example.com" /><button type="submit">Add</button></div></form><div className="dn-blocklist"><strong>Blocked sites</strong>{settings.disabledHosts.length ? settings.disabledHosts.map((host) => <div key={host}><span>{host}</span><button aria-label={`Unblock ${host}`} onClick={() => allowHost(host)}>Allow</button></div>) : <small>No custom sites blocked.</small>}<strong>Default protected sites</strong>{DEFAULT_BLOCKED_HOSTS.map((host) => { const allowed = settings.enabledHosts.some((rule) => hostMatches(hostname, rule)) && hostMatches(hostname, host); return <div key={host}><span>{host}</span><button aria-label={`${allowed ? 'Block' : 'Allow'} DevNotes on ${host}`} onClick={() => allowed ? addBlockedHost(host) : allowHost(host)}>{allowed ? 'Block' : 'Allow'}</button></div> })}</div></div></section>}
-      <div className="dn-page"><div className="dn-site-icon">{hostname[0]?.toUpperCase()}</div><div className="dn-page-copy"><strong>{hostname}</strong><span title={pageTitle}>{pageTitle}</span></div><button className="dn-clip" title="Clip the main article" onClick={clipArticle}>Clip</button><button className="dn-icon-button dn-more" title="Highlight selection and save as a note" aria-label="Capture selected text" onClick={() => captureSelection()}>✳</button></div>
-      {highlights.length > 0 && <div className="dn-highlights"><strong>Page highlights · {highlights.length}</strong>{highlights.map((item) => <div className="dn-highlight-row" key={item.id}><button className="dn-highlight-quote" onClick={() => { document.querySelector<HTMLElement>(`[data-devnotes-highlight="${CSS.escape(item.id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }); if (item.noteId) { setSelectedPageUrl(pageUrl); setSelectedId(item.noteId) } }}>{item.text.slice(0, 45)}{item.text.length > 45 ? '…' : ''}</button>{orphanedHighlights.includes(item.id) && <span className="dn-orphan-badge">Not found</span>}<div className="dn-highlight-tools"><button title="Yellow" aria-label="Set highlight color to yellow" style={{ background: '#f6e58d' }} onClick={() => changeHighlightColor(item.id, '#f6e58d')} /><button title="Green" aria-label="Set highlight color to green" style={{ background: '#c8e6a0' }} onClick={() => changeHighlightColor(item.id, '#c8e6a0')} /><button title="Blue" aria-label="Set highlight color to blue" style={{ background: '#b7dff2' }} onClick={() => changeHighlightColor(item.id, '#b7dff2')} /><button title="Pink" aria-label="Set highlight color to pink" style={{ background: '#f2c5d2' }} onClick={() => changeHighlightColor(item.id, '#f2c5d2')} /><button className="dn-highlight-remove" title="Remove highlight" onClick={() => removeHighlight(item.id)}>×</button></div></div>)}</div>}
-      <div className="dn-dashboard-tabs"><button className={!showAllNotes && !showTrash ? 'active' : ''} onClick={() => { setShowAllNotes(false); setShowArchived(false); setShowFavorites(false); setShowTasks(false); setShowTrash(false); setCollectionFilter('') }}>This page</button><button className={showAllNotes && !showArchived && !showFavorites && !showTasks && !showTrash ? 'active' : ''} onClick={() => { setShowAllNotes(true); setShowArchived(false); setShowFavorites(false); setShowTasks(false); setShowTrash(false) }}>All notes</button><button className={showTasks ? 'active' : ''} onClick={() => { setShowAllNotes(true); setShowArchived(false); setShowFavorites(false); setShowTasks(true); setShowTrash(false) }}>Tasks</button><button className={showFavorites ? 'active' : ''} onClick={() => { setShowAllNotes(true); setShowArchived(false); setShowFavorites(true); setShowTasks(false); setShowTrash(false) }}>Favorites</button><button className={showArchived ? 'active' : ''} onClick={() => { setShowAllNotes(true); setShowArchived(true); setShowFavorites(false); setShowTasks(false); setShowTrash(false) }}>Archived</button><button className={showTrash ? 'active' : ''} onClick={() => { setShowAllNotes(true); setShowTrash(true); setShowArchived(false); setShowFavorites(false); setShowTasks(false) }}>Trash</button></div>
-      <div className="dn-page-heading"><h1>{showTrash ? 'Trash' : showArchived ? 'Archived' : showTasks ? 'Tasks' : showFavorites ? 'Favorites' : showAllNotes ? 'All notes' : 'Page notes'} <span>{showTrash ? trash.length : showArchived ? allNotes.filter(({ note }) => note.archived).length : showTasks ? allNotes.filter(({ note }) => !note.archived && /(?:^|\n)\s*[-*+]\s*\[ \]/.test(note.body)).length : showFavorites ? allNotes.filter(({ note }) => note.favorite && !note.archived).length : showAllNotes ? allNotes.filter(({ note }) => !note.archived).length : notes.filter((note) => !note.archived).length}</span></h1><div className="dn-heading-actions"><button className="dn-export" onClick={exportMarkdown} disabled={!allNotes.length} title="Export all notes as Markdown">MD</button><button className="dn-export" onClick={() => void exportJSON()} title="Export JSON backup">Backup</button><button className="dn-export" onClick={() => importRef.current?.click()} title="Import JSON backup">Import</button><input ref={importRef} type="file" accept="application/json,.json" hidden onChange={(event) => { void importJSON(event.target.files?.[0]); event.currentTarget.value = '' }} /><select className="dn-template-select" aria-label="Create note from template" value="" onChange={(event) => { if (event.target.value) createFromTemplate(event.target.value as keyof typeof NOTE_TEMPLATES) }}><option value="">Template…</option>{Object.keys(NOTE_TEMPLATES).map((name) => <option key={name} value={name}>{name}</option>)}</select><button className="dn-new" onClick={() => createNote()}><b>＋</b> New note</button></div></div>
-      {showAllNotes && <div className="dn-collection-bar"><select aria-label="Filter by collection" value={collectionFilter} onChange={(event) => setCollectionFilter(event.target.value)}><option value="">All collections</option>{collections.map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select><input className="dn-domain-filter" aria-label="Filter by website domain" placeholder="Domain" value={domainFilter} onChange={(event) => setDomainFilter(event.target.value)} /><select aria-label="Sort notes" value={sortMode} onChange={(event) => setSortMode(event.target.value as typeof sortMode)}><option value="updated">Updated</option><option value="created">Created</option><option value="title">Title</option></select><input aria-label="Updated after" title="Updated after" type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} /><input aria-label="Updated before" title="Updated before" type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} /><button className="dn-collection-add" onClick={createCollection}>＋</button></div>}
-      {showAllNotes && availableTags.length > 0 && <div className="dn-tag-browser"><strong>Tags</strong>{availableTags.map((tag) => <button key={tag} onClick={() => setQuery((value) => `${value} tag:"${tag}"`.trim())}>{tag}</button>)}</div>}
-      {showAllNotes && bulkSelection.length > 0 && <div className="dn-bulk-actions"><strong>{bulkSelection.length} selected</strong><button onClick={applyBulkTags}>Add tags</button><button onClick={() => bulkUpdate((note) => ({ ...note, archived: true }))}>Archive</button><button onClick={() => setBulkSelection([])}>Clear</button></div>}
-      {addingCollection && <form className="dn-new-collection" onSubmit={(event) => { event.preventDefault(); saveCollection() }}><input autoFocus aria-label="Collection name" placeholder="Collection name" value={collectionDraft} onChange={(event) => setCollectionDraft(event.target.value)} /><button type="submit">Create</button><button type="button" onClick={() => { setAddingCollection(false); setCollectionDraft('') }}>Cancel</button></form>}
-      <label className="dn-search"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.8" cy="8.8" r="5.8"/><path d="m13.2 13.2 4 4"/></svg><input ref={searchRef} value={query} onChange={(event) => { setQuery(event.target.value); setLibraryOpen(true); setShowAllNotes(true) }} placeholder="Search notes" /><kbd>{isMac ? '⌘' : 'Ctrl'} K</kbd></label>
-      {importError && <div className="dn-import-status" role="status">{importError}<button aria-label="Dismiss message" onClick={() => setImportError('')}>×</button></div>}
-      {!ready ? <div className="dn-empty">Loading your notes…</div> : showTrash ? <div className="dn-trash-list">{trash.length ? trash.map((entry) => <div className="dn-trash-row" key={entry.note.id}><span><strong>{entry.note.title || 'Untitled note'}</strong><small>{safeHostname(entry.url)}</small></span><button className="dn-preview-toggle" onClick={() => restoreFromTrash(entry)}>Restore</button><button className="dn-delete" onClick={() => { const next = trash.filter((item) => item.note.id !== entry.note.id); setTrash(next); void writeTrash(next) }}>Delete forever</button></div>) : <div className="dn-empty">Trash is empty.</div>}</div> : !showAllNotes && notes.length === 0 && !query.trim() ? <div className="dn-empty-state"><div className="dn-empty-icon">✎</div><strong>A fresh page to think on.</strong><p>Keep the useful bits, questions, and ideas you find here.</p><button onClick={() => createNote()}>Write your first note <span>→</span></button><div className="dn-hint">TIP · SELECT TEXT ON THE PAGE, THEN TAP ✳</div></div> : filteredNotes.length === 0 ? <div className="dn-empty">{query.trim() ? `No notes match “${query}”.` : 'No notes here yet.'}</div> : <div className="dn-content">
-        <div className="dn-note-list">{filteredNotes.map(({ note, url }) => <div key={`${url}:${note.id}`} className={`dn-note-row-wrap ${selectedPageUrl === url && selectedId === note.id ? 'active' : ''}`}>{showAllNotes && <input className="dn-bulk-check" type="checkbox" aria-label={`Select ${note.title || 'Untitled note'}`} checked={bulkSelection.includes(note.id)} onChange={(event) => setBulkSelection((ids) => event.target.checked ? [...ids, note.id] : ids.filter((id) => id !== note.id))} />}<button className="dn-note-row" onClick={() => { setSelectedPageUrl(url); setSelectedId(note.id) }}><span className="dn-note-dot"/><span className="dn-note-row-text"><strong>{note.pinned ? '📌 ' : ''}<SearchMatch text={note.title || 'Untitled note'} query={query} /></strong><small>{showAllNotes || query ? safeHostname(url) + ' · ' : ''}{note.body.trim().replace(/^>\s?/gm, '').slice(0, 58) || 'No content yet'}</small></span></button><button className={`dn-row-action ${note.favorite ? 'selected' : ''}`} title={note.favorite ? 'Remove favorite' : 'Add favorite'} aria-label={note.favorite ? 'Remove favorite' : 'Add favorite'} onClick={() => toggleNoteFlag(note.id, 'favorite', url)}>{note.favorite ? '♥' : '♡'}</button><button className="dn-row-action" title={note.archived ? 'Restore from archive' : 'Archive note'} aria-label={note.archived ? 'Restore note' : 'Archive note'} onClick={() => toggleNoteFlag(note.id, 'archived', url)}>{note.archived ? '↶' : '▱'}</button></div>)}</div>
-        {selected ? <article className="dn-editor"><div className="dn-editor-top"><span className="dn-note-type">NOTE</span><div className="dn-editor-actions"><button className={`dn-preview-toggle ${selected.pinned ? 'active' : ''}`} onClick={() => updateSelected({ pinned: !selected.pinned })}>{selected.pinned ? 'Unpin' : 'Pin'}</button><button className={`dn-preview-toggle ${selected.favorite ? 'active' : ''}`} onClick={() => updateSelected({ favorite: !selected.favorite })}>{selected.favorite ? '♥ Favorite' : '♡ Favorite'}</button><button className="dn-preview-toggle" onClick={() => setShowHistory((value) => !value)}>History</button><button className={`dn-preview-toggle ${preview ? 'active' : ''}`} onClick={() => setPreview((value) => !value)} aria-pressed={preview}>{preview ? 'Edit' : 'Preview'}</button><button className="dn-delete" onClick={deleteNote} title="Move note to trash">Delete</button></div></div><input className="dn-title" placeholder="Give this note a title…" value={selected.title} onChange={(event) => updateNote('title', event.target.value)} />{showHistory && <div className="dn-history-list">{(selected.history ?? []).length ? [...(selected.history ?? [])].reverse().map((revision) => <button key={revision.id} onClick={() => restoreRevision(revision)}><strong>{revision.title || 'Untitled note'}</strong><small>{new Date(revision.savedAt).toLocaleString()} · Restore</small></button>) : <small>No saved versions yet. Versions are captured during editing.</small>}</div>}{preview ? <div className="dn-markdown-preview" onChange={(event) => { const input = event.target as HTMLInputElement; if (input.matches('input[data-task-index]')) setTaskStatus(Number(input.dataset.taskIndex), input.checked) }} onClick={(event) => { const target = event.target as HTMLElement; const copy = target.closest<HTMLButtonElement>('[data-copy-code]'); if (copy) { const code = copy.parentElement?.querySelector('code')?.textContent ?? ''; void navigator.clipboard?.writeText(code).then(() => { copy.textContent = 'Copied' }) } const anchor = target.closest('a'); const href = anchor?.getAttribute('href'); if (href?.startsWith('#devnotes-note-id-')) { event.preventDefault(); openLinkedNote('id:' + decodeURIComponent(href.slice('#devnotes-note-id-'.length))) } else if (href?.startsWith('#devnotes-note-')) { event.preventDefault(); openLinkedNote(decodeURIComponent(href.slice('#devnotes-note-'.length))) } }} dangerouslySetInnerHTML={{ __html: renderNoteMarkdown(selected.body || '*Nothing to preview yet.*') }} /> : <textarea className="dn-body" placeholder="Start writing…" value={selected.body} onChange={(event) => updateNote('body', event.target.value)} />}<LinkNoteInput notes={allNotes.filter(({ note }) => note.id !== selected.id)} onLink={(id, title) => updateNote('body', `${selected.body}\n[[id:${id}|${title}]]`)} /><div className="dn-collection-assign">{collections.length ? collections.map((collection) => <label key={collection.id}><input type="checkbox" checked={selected.collectionIds?.includes(collection.id) ?? false} onChange={(event) => { const ids = selected.collectionIds ?? []; updateSelected({ collectionIds: event.target.checked ? [...ids, collection.id] : ids.filter((id) => id !== collection.id) }) }} />{collection.name}</label>) : <button className="dn-collection-add" onClick={createCollection}>＋ Create a collection</button>}</div><TagInput key={selected.id} tags={selected.tags ?? []} onCommit={(tags) => updateNote('tags', tags)} />{backlinks.length > 0 && <div className="dn-backlinks"><strong>Linked from</strong>{backlinks.map(({ note, url }) => <button key={note.id} onClick={() => { setSelectedPageUrl(url); setSelectedId(note.id) }}>{note.title || 'Untitled note'}</button>)}</div>}<div className="dn-editor-footer"><span><i/>{saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Save failed · try editing again' : 'Saved locally'}</span></div></article> : null}
-      </div>}
+
+      <div className="dn-page">
+        <div className="dn-site-icon">{hostname[0]?.toUpperCase()}</div>
+        <div className="dn-page-copy"><strong>{hostname}</strong><span title={pageTitle}>{pageTitle}</span></div>
+        <button className="dn-clip" title="Clip the main article" onClick={clipArticle}>Clip</button>
+        <button className="dn-icon-button dn-more" title="Highlight selection and save as a note" aria-label="Capture selected text" onClick={() => captureSelection()}>✳</button>
+      </div>
+
+      {/* Board E: Side panel extras for "This page" */}
+      {!libraryOpen ? (
+        <div style={{ padding: '0 24px 24px', flex: 1, overflowY: 'auto' }}>
+          {/* Page Status */}
+          <div className="dn-status-group" aria-label="Page reading status">
+            <button className={`dn-status-btn ${currentPageMeta.status === 'to-read' ? 'active' : ''}`} onClick={() => updatePageMeta({ status: 'to-read' })}>To read</button>
+            <button className={`dn-status-btn ${currentPageMeta.status === 'reading' ? 'active' : ''}`} onClick={() => updatePageMeta({ status: 'reading' })}>Reading</button>
+            <button className={`dn-status-btn ${currentPageMeta.status === 'done' ? 'active' : ''}`} onClick={() => updatePageMeta({ status: 'done' })}>Done</button>
+          </div>
+
+          {/* Lost Anchors section if any orphaned highlights */}
+          {orphanedHighlights.length > 0 && (
+            <div className="dn-orphans-card" role="region" aria-label="Lost anchors">
+              <div className="dn-orphans-title">
+                <span>Lost Anchors · {orphanedHighlights.length}</span>
+              </div>
+              {orphanedHighlights.map((id) => {
+                const item = highlights.find((h) => h.id === id)
+                if (!item) return null
+                return (
+                  <div key={id} className="dn-orphan-row">
+                    <span className="dn-orphan-text" title={item.text}>“{item.text.slice(0, 36)}{item.text.length > 36 ? '…' : ''}”</span>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <button className="dn-reattach-btn" onClick={() => reattachHighlight(id)} title="Select new passage and click to reattach">Reattach</button>
+                      <button className="dn-reattach-btn" style={{ borderColor: '#e4b6ad', color: '#8d6259' }} onClick={() => removeHighlight(id)} title="Delete orphan highlight">×</button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          {/* Why I saved this */}
+          <div className="dn-section-hdr">WHY I SAVED THIS</div>
+          <input
+            className="dn-why-input"
+            aria-label="Why I saved this"
+            placeholder="Reference for my project…"
+            value={currentPageMeta.whySaved}
+            onChange={(e) => updatePageMeta({ whySaved: e.target.value })}
+          />
+
+          {/* Page Tasks */}
+          <div className="dn-section-hdr">TASKS · {openTasksCount} OPEN</div>
+          <div className="dn-tasks-box">
+            {pageTasks.map((t) => (
+              <label key={t.id} className={`dn-task-item ${t.done ? 'is-done' : ''}`}>
+                <input type="checkbox" checked={t.done} onChange={(e) => togglePageTask(t.id, e.target.checked)} />
+                <span>{t.text}</span>
+              </label>
+            ))}
+            <form
+              className="dn-add-task-form"
+              onSubmit={(e) => {
+                e.preventDefault()
+                if (newTaskDraft.trim()) {
+                  addPageTask(newTaskDraft.trim())
+                  setNewTaskDraft('')
+                }
+              }}
+            >
+              <input
+                placeholder="Add page task…"
+                value={newTaskDraft}
+                onChange={(e) => setNewTaskDraft(e.target.value)}
+              />
+              <button type="submit">＋</button>
+            </form>
+          </div>
+
+          {/* Related Notes */}
+          {pageRelatedNotes.length > 0 && (
+            <>
+              <div className="dn-section-hdr">RELATED</div>
+              <div className="dn-related-list">
+                {pageRelatedNotes.map(({ note, url }) => (
+                  <button
+                    key={note.id}
+                    className="dn-related-item"
+                    onClick={() => {
+                      setSelectedPageUrl(url)
+                      setSelectedId(note.id)
+                      setLibraryOpen(true)
+                      setShowAllNotes(true)
+                    }}
+                  >
+                    <span>{note.title || 'Untitled note'}</span>
+                    <span>· {safeHostname(url)}</span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* Tags */}
+          {availableTags.length > 0 && (
+            <>
+              <div className="dn-section-hdr">TAGS</div>
+              <div className="dn-pill-tags">
+                {availableTags.slice(0, 8).map((tag) => (
+                  <span key={tag} className="dn-pill-tag">{tag}</span>
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* Today's journal */}
+          <div className="dn-section-hdr">TODAY · {todayDateStr}</div>
+          <div className="dn-today-box">
+            {todayJournalSnippet}
+          </div>
+        </div>
+      ) : (
+        /* Library View */
+        <>
+          <div className="dn-dashboard-tabs">
+            <button className={!showAllNotes && !showTrash ? 'active' : ''} onClick={() => { setShowAllNotes(false); setShowArchived(false); setShowFavorites(false); setShowTasks(false); setShowTrash(false); setCollectionFilter('') }}>This page</button>
+            <button className={showAllNotes && !showArchived && !showFavorites && !showTasks && !showTrash ? 'active' : ''} onClick={() => { setShowAllNotes(true); setShowArchived(false); setShowFavorites(false); setShowTasks(false); setShowTrash(false) }}>All notes</button>
+            <button className={showTasks ? 'active' : ''} onClick={() => { setShowAllNotes(true); setShowArchived(false); setShowFavorites(false); setShowTasks(true); setShowTrash(false) }}>Tasks</button>
+            <button className={showFavorites ? 'active' : ''} onClick={() => { setShowAllNotes(true); setShowArchived(false); setShowFavorites(true); setShowTasks(false); setShowTrash(false) }}>Favorites</button>
+            <button className={showArchived ? 'active' : ''} onClick={() => { setShowAllNotes(true); setShowArchived(true); setShowFavorites(false); setShowTasks(false); setShowTrash(false) }}>Archived</button>
+            <button className={showTrash ? 'active' : ''} onClick={() => { setShowAllNotes(true); setShowTrash(true); setShowArchived(false); setShowFavorites(false); setShowTasks(false) }}>Trash</button>
+          </div>
+          <div className="dn-page-heading">
+            <h1>{showTrash ? 'Trash' : showArchived ? 'Archived' : showTasks ? 'Tasks' : showFavorites ? 'Favorites' : showAllNotes ? 'All notes' : 'Page notes'} <span>{showTrash ? trash.length : showArchived ? allNotes.filter(({ note }) => note.archived).length : showTasks ? allNotes.filter(({ note }) => !note.archived && /(?:^|\n)\s*[-*+]\s*\[ \]/.test(note.body)).length : showFavorites ? allNotes.filter(({ note }) => note.favorite && !note.archived).length : showAllNotes ? allNotes.filter(({ note }) => !note.archived).length : notes.filter((note) => !note.archived).length}</span></h1>
+            <div className="dn-heading-actions">
+              <button className="dn-export" onClick={exportMarkdown} disabled={!allNotes.length} title="Export all notes as Markdown">MD</button>
+              <button className="dn-export" onClick={() => void exportJSON()} title="Export JSON backup">Backup</button>
+              <button className="dn-export" onClick={() => importRef.current?.click()} title="Import JSON backup">Import</button>
+              <input ref={importRef} type="file" accept="application/json,.json" hidden onChange={(event) => { void importJSON(event.target.files?.[0]); event.currentTarget.value = '' }} />
+              <select className="dn-template-select" aria-label="Create note from template" value="" onChange={(event) => { if (event.target.value) createFromTemplate(event.target.value as keyof typeof NOTE_TEMPLATES) }}><option value="">Template…</option>{Object.keys(NOTE_TEMPLATES).map((name) => <option key={name} value={name}>{name}</option>)}</select>
+              <button className="dn-new" onClick={() => createNote()}><b>＋</b> New note</button>
+            </div>
+          </div>
+          {showAllNotes && <div className="dn-collection-bar"><select aria-label="Filter by collection" value={collectionFilter} onChange={(event) => setCollectionFilter(event.target.value)}><option value="">All collections</option>{collections.map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select><input className="dn-domain-filter" aria-label="Filter by website domain" placeholder="Domain" value={domainFilter} onChange={(event) => setDomainFilter(event.target.value)} /><select aria-label="Sort notes" value={sortMode} onChange={(event) => setSortMode(event.target.value as typeof sortMode)}><option value="updated">Updated</option><option value="created">Created</option><option value="title">Title</option></select><input aria-label="Updated after" title="Updated after" type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} /><input aria-label="Updated before" title="Updated before" type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} /><button className="dn-collection-add" onClick={createCollection}>＋</button></div>}
+          {showAllNotes && availableTags.length > 0 && <div className="dn-tag-browser"><strong>Tags</strong>{availableTags.map((tag) => <button key={tag} onClick={() => setQuery((value) => `${value} tag:"${tag}"`.trim())}>{tag}</button>)}</div>}
+          {showAllNotes && bulkSelection.length > 0 && <div className="dn-bulk-actions"><strong>{bulkSelection.length} selected</strong><button onClick={applyBulkTags}>Add tags</button><button onClick={() => bulkUpdate((note) => ({ ...note, archived: true }))}>Archive</button><button onClick={() => setBulkSelection([])}>Clear</button></div>}
+          {addingCollection && <form className="dn-new-collection" onSubmit={(event) => { event.preventDefault(); saveCollection() }}><input autoFocus aria-label="Collection name" placeholder="Collection name" value={collectionDraft} onChange={(event) => setCollectionDraft(event.target.value)} /><button type="submit">Create</button><button type="button" onClick={() => { setAddingCollection(false); setCollectionDraft('') }}>Cancel</button></form>}
+          <label className="dn-search"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.8" cy="8.8" r="5.8" /><path d="m13.2 13.2 4 4" /></svg><input ref={searchRef} value={query} onChange={(event) => { setQuery(event.target.value); setLibraryOpen(true); setShowAllNotes(true) }} placeholder="Search notes" /><kbd>{isMac ? '⌘' : 'Ctrl'} K</kbd></label>
+          {importError && <div className="dn-import-status" role="status">{importError}<button aria-label="Dismiss message" onClick={() => setImportError('')}>×</button></div>}
+          {!ready ? <div className="dn-empty">Loading your notes…</div> : showTrash ? <div className="dn-trash-list">{trash.length ? trash.map((entry) => <div className="dn-trash-row" key={entry.note.id}><span><strong>{entry.note.title || 'Untitled note'}</strong><small>{safeHostname(entry.url)}</small></span><button className="dn-preview-toggle" onClick={() => restoreFromTrash(entry)}>Restore</button><button className="dn-delete" onClick={() => { const next = trash.filter((item) => item.note.id !== entry.note.id); setTrash(next); void writeTrash(next) }}>Delete forever</button></div>) : <div className="dn-empty">Trash is empty.</div>}</div> : !showAllNotes && notes.length === 0 && !query.trim() ? <div className="dn-empty-state"><div className="dn-empty-icon">✎</div><strong>A fresh page to think on.</strong><p>Keep the useful bits, questions, and ideas you find here.</p><button onClick={() => createNote()}>Write your first note <span>→</span></button><div className="dn-hint">TIP · SELECT TEXT ON THE PAGE, THEN TAP ✳</div></div> : filteredNotes.length === 0 ? <div className="dn-empty">{query.trim() ? `No notes match “${query}”.` : 'No notes here yet.'}</div> : <div className="dn-content">
+            <div className="dn-note-list">{filteredNotes.map(({ note, url }) => <div key={`${url}:${note.id}`} className={`dn-note-row-wrap ${selectedPageUrl === url && selectedId === note.id ? 'active' : ''}`}>{showAllNotes && <input className="dn-bulk-check" type="checkbox" aria-label={`Select ${note.title || 'Untitled note'}`} checked={bulkSelection.includes(note.id)} onChange={(event) => setBulkSelection((ids) => event.target.checked ? [...ids, note.id] : ids.filter((id) => id !== note.id))} />}<button className="dn-note-row" onClick={() => { setSelectedPageUrl(url); setSelectedId(note.id) }}><span className="dn-note-dot" /><span className="dn-note-row-text"><strong>{note.pinned ? '📌 ' : ''}<SearchMatch text={note.title || 'Untitled note'} query={query} /></strong><small>{showAllNotes || query ? safeHostname(url) + ' · ' : ''}{note.body.trim().replace(/^>\s?/gm, '').slice(0, 58) || 'No content yet'}</small></span></button><button className={`dn-row-action ${note.favorite ? 'selected' : ''}`} title={note.favorite ? 'Remove favorite' : 'Add favorite'} aria-label={note.favorite ? 'Remove favorite' : 'Add favorite'} onClick={() => toggleNoteFlag(note.id, 'favorite', url)}>{note.favorite ? '♥' : '♡'}</button><button className="dn-row-action" title={note.archived ? 'Restore from archive' : 'Archive note'} aria-label={note.archived ? 'Restore note' : 'Archive note'} onClick={() => toggleNoteFlag(note.id, 'archived', url)}>{note.archived ? '↶' : '▱'}</button></div>)}</div>
+            {selected ? <article className="dn-editor"><div className="dn-editor-top"><span className="dn-note-type">NOTE</span><div className="dn-editor-actions"><button className={`dn-preview-toggle ${selected.pinned ? 'active' : ''}`} onClick={() => updateSelected({ pinned: !selected.pinned })}>{selected.pinned ? 'Unpin' : 'Pin'}</button><button className={`dn-preview-toggle ${selected.favorite ? 'active' : ''}`} onClick={() => updateSelected({ favorite: !selected.favorite })}>{selected.favorite ? '♥ Favorite' : '♡ Favorite'}</button><button className="dn-preview-toggle" onClick={() => setShowHistory((value) => !value)}>History</button><button className={`dn-preview-toggle ${preview ? 'active' : ''}`} onClick={() => setPreview((value) => !value)} aria-pressed={preview}>{preview ? 'Edit' : 'Preview'}</button><button className="dn-delete" onClick={deleteNote} title="Move note to trash">Delete</button></div></div><input className="dn-title" placeholder="Give this note a title…" value={selected.title} onChange={(event) => updateNote('title', event.target.value)} />{showHistory && <div className="dn-history-list">{(selected.history ?? []).length ? [...(selected.history ?? [])].reverse().map((revision) => <button key={revision.id} onClick={() => restoreRevision(revision)}><strong>{revision.title || 'Untitled note'}</strong><small>{new Date(revision.savedAt).toLocaleString()} · Restore</small></button>) : <small>No saved versions yet. Versions are captured during editing.</small>}</div>}{preview ? <div className="dn-markdown-preview" onChange={(event) => { const input = event.target as HTMLInputElement; if (input.matches('input[data-task-index]')) setTaskStatus(Number(input.dataset.taskIndex), input.checked) }} onClick={(event) => { const target = event.target as HTMLElement; const copy = target.closest<HTMLButtonElement>('[data-copy-code]'); if (copy) { const code = copy.parentElement?.querySelector('code')?.textContent ?? ''; void navigator.clipboard?.writeText(code).then(() => { copy.textContent = 'Copied' }) } const anchor = target.closest('a'); const href = anchor?.getAttribute('href'); if (href?.startsWith('#devnotes-note-id-')) { event.preventDefault(); openLinkedNote('id:' + decodeURIComponent(href.slice('#devnotes-note-id-'.length))) } else if (href?.startsWith('#devnotes-note-')) { event.preventDefault(); openLinkedNote(decodeURIComponent(href.slice('#devnotes-note-'.length))) } }} dangerouslySetInnerHTML={{ __html: renderNoteMarkdown(selected.body || '*Nothing to preview yet.*') }} /> : <textarea className="dn-body" placeholder="Start writing…" value={selected.body} onChange={(event) => updateNote('body', event.target.value)} />}<LinkNoteInput notes={allNotes.filter(({ note }) => note.id !== selected.id)} onLink={(id, title) => updateNote('body', `${selected.body}\n[[id:${id}|${title}]]`)} /><div className="dn-collection-assign">{collections.length ? collections.map((collection) => <label key={collection.id}><input type="checkbox" checked={selected.collectionIds?.includes(collection.id) ?? false} onChange={(event) => { const ids = selected.collectionIds ?? []; updateSelected({ collectionIds: event.target.checked ? [...ids, collection.id] : ids.filter((id) => id !== collection.id) }) }} />{collection.name}</label>) : <button className="dn-collection-add" onClick={createCollection}>＋ Create a collection</button>}</div><TagInput key={selected.id} tags={selected.tags ?? []} onCommit={(tags) => updateNote('tags', tags)} />{backlinks.length > 0 && <div className="dn-backlinks"><strong>Linked from</strong>{backlinks.map(({ note, url }) => <button key={note.id} onClick={() => { setSelectedPageUrl(url); setSelectedId(note.id) }}>{note.title || 'Untitled note'}</button>)}</div>}<div className="dn-editor-footer"><span><i />{saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Save failed · try editing again' : 'Saved locally'}</span></div></article> : null}
+          </div>}
+        </>
+      )}
     </aside>
   </>
 }
