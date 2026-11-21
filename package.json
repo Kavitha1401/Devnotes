@@ -1,12 +1,14 @@
 {
   "name": "devnotes",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "build:popup": "vite build",
     "build:content": "vite build --config vite.content.config.ts",
-    "build": "npm run build:popup && npm run build:content"
+    "typecheck": "tsc --noEmit -p tsconfig.app.json",
+    "lint": "oxlint src public/serviceWorker.js",
+    "build": "npm run typecheck && npm run build:popup && npm run build:content"
   },
   "dependencies": {
     "dompurify": "^3.4.18",

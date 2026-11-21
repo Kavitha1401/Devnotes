@@ -11,7 +11,7 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: false,
     lib: {
-      entry: resolve(__dirname, 'src/content/content.tsx'),
+      entry: resolve(import.meta.dirname, 'src/content/content.tsx'),
       name: 'DevNotesContent',
       formats: ['iife'],
       fileName: () => 'content.js',

@@ -52,6 +52,11 @@ button { cursor: pointer; }
 .dn-collection-bar { display: flex; gap: 7px; margin: 0 24px 10px; }
 .dn-collection-bar select { flex: 1; min-width: 0; border: 1px solid #e5e6de; border-radius: 7px; padding: 7px; color: #55594f; background: white; font-size: 9px; }
 .dn-domain-filter { width: 76px; min-width: 0; border: 1px solid #e5e6de; border-radius: 7px; padding: 6px; color: #55594f; background: white; font-size: 9px; }
+.dn-new-collection { display: flex; gap: 5px; margin: 0 24px 9px; }
+.dn-new-collection input { flex: 1; min-width: 0; border: 1px solid #e5e6de; border-radius: 6px; padding: 6px 8px; font-size: 9px; }
+.dn-new-collection button { border: 1px solid #e2e4da; border-radius: 6px; padding: 5px 7px; color: #566b3e; background: #fff; font-size: 9px; }
+.dn-import-status { display: flex; justify-content: space-between; align-items: center; margin: 0 24px 8px; padding: 6px 8px; border-radius: 6px; color: #566b3e; background: #edf2e5; font-size: 9px; }
+.dn-import-status button { border: 0; color: inherit; background: transparent; font-size: 12px; }
 .dn-collection-add { border: 1px solid #e2e4da; border-radius: 7px; padding: 6px 8px; color: #65784d; background: transparent; font-size: 9px; }
 .dn-collection-add:hover { background: #eef0e7; }
 .dn-note-row-wrap { display: flex; align-items: center; border: 1px solid transparent; border-radius: 8px; }
@@ -60,6 +65,7 @@ button { cursor: pointer; }
 .dn-row-action { border: 0; border-radius: 5px; padding: 5px; color: #a0a395; background: transparent; font-size: 12px; }
 .dn-row-action:hover, .dn-row-action.selected { color: #9c6957; background: #f7eee8; }
 .dn-collection-assign { display: flex; flex-wrap: wrap; gap: 5px 10px; margin: 3px 0 7px; }
+.dn-link-note { align-self: flex-start; max-width: 100%; margin: 0 0 5px; border: 1px solid #e8e9e1; border-radius: 6px; padding: 5px 7px; color: #73776d; background: #fbfbf8; font-size: 9px; }
 .dn-collection-assign label { display: inline-flex; align-items: center; gap: 4px; color: #72766b; font-size: 9px; }
 .dn-collection-assign input { accent-color: #718b50; }
 .dn-trash-list { min-height: 0; flex: 1; overflow: auto; padding: 0 24px 20px; }

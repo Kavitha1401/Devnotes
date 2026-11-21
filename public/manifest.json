@@ -2,10 +2,26 @@
   "manifest_version": 3,
   "name": "DevNotes",
   "version": "0.1.0",
-  "permissions": ["storage", "activeTab", "scripting", "contextMenus"],
+  "description": "Save page notes, highlights, and research locally while you browse.",
+  "minimum_chrome_version": "111",
+  "icons": {
+    "16": "icon16.png",
+    "32": "icon32.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "permissions": ["storage", "unlimitedStorage", "scripting", "contextMenus"],
   "host_permissions": ["<all_urls>"],
-  "action": { "default_title": "Open DevNotes" },
+  "action": { "default_title": "Open DevNotes", "default_icon": { "16": "icon16.png", "32": "icon32.png" } },
   "commands": {
+    "toggle-sidebar": {
+      "suggested_key": { "default": "Alt+Shift+D" },
+      "description": "Toggle the DevNotes sidebar"
+    },
+    "focus-search": {
+      "suggested_key": { "default": "Alt+Shift+K" },
+      "description": "Focus DevNotes search"
+    },
     "quick-capture": {
       "suggested_key": { "default": "Alt+Shift+S" },
       "description": "Capture selected text to DevNotes"
