@@ -27,7 +27,8 @@ if (/^https?:/.test(location.protocol)) {
 
 if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((message) => {
-    if (message?.type !== 'DEVNOTES_TOGGLE') return
-    window.dispatchEvent(new CustomEvent('devnotes-toggle'))
+    if (message?.type === 'DEVNOTES_TOGGLE') window.dispatchEvent(new CustomEvent('devnotes-toggle'))
+    if (message?.type === 'DEVNOTES_CAPTURE_SELECTION') window.dispatchEvent(new CustomEvent('devnotes-capture-selection'))
+    if (message?.type === 'DEVNOTES_NEW_NOTE') window.dispatchEvent(new CustomEvent('devnotes-new-note'))
   })
 }

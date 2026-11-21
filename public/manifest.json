@@ -2,9 +2,19 @@
   "manifest_version": 3,
   "name": "DevNotes",
   "version": "0.1.0",
-  "permissions": ["storage", "activeTab", "scripting"],
+  "permissions": ["storage", "activeTab", "scripting", "contextMenus"],
   "host_permissions": ["<all_urls>"],
   "action": { "default_title": "Open DevNotes" },
+  "commands": {
+    "quick-capture": {
+      "suggested_key": { "default": "Alt+Shift+S" },
+      "description": "Capture selected text to DevNotes"
+    },
+    "new-note": {
+      "suggested_key": { "default": "Alt+Shift+N" },
+      "description": "Create a DevNotes note"
+    }
+  },
   "background": { "service_worker": "serviceWorker.js" },
   "content_scripts": [
     {
