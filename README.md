@@ -39,6 +39,11 @@ Markdown preview sanitizes generated HTML, removes images to prevent remote trac
 - Copy fenced code blocks from Markdown preview.
 - Disable DevNotes per site, with default protection for common banking and email hosts. Re-enable a blocked site from the extension toolbar.
 - Configure theme, panel side and width, launcher position or visibility, default highlight color, Trash retention, and version-history depth in Settings.
+- Select text to open the in-page annotation toolbar. Choose a color, or create a Note, Quote, or linked annotation.
+- Create an inline comment beside selected text or a draggable sticky note over the page. Sticky position is saved with the annotation.
+- Navigate page annotations with the numbered edge rail. Wide pages show connected margin cards; narrow pages keep numbered inline markers.
+- Pick marker fill, wavy underline, box, or bracket highlights, along with Marker, Pencil, or Fountain pen card styling, paper tone, and note font from the annotation appearance menu.
+- The panel opens in a focused This page view. Use Library to switch to search, organization, and the full notes list.
 
 Keyboard shortcuts: `Alt+Shift+D` toggles the panel, `Alt+Shift+K` focuses search, `Alt+Shift+S` captures selected text, `Alt+Shift+N` creates a note, and `Esc` closes the open panel. Search also accepts `Ctrl/Cmd+K` while DevNotes is open. Chrome lets you change extension shortcuts at `chrome://extensions/shortcuts`.
 

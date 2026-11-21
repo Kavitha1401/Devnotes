@@ -12,6 +12,10 @@ export type DevNotesSettings = {
   highlightColor: string
   trashRetentionDays: number
   historyDepth: number
+  highlightStyle: 'marker' | 'underline' | 'box' | 'bracket'
+  penSet: 'marker' | 'pencil' | 'fountain'
+  paperTone: 'cream' | 'sepia' | 'grey' | 'night'
+  noteFont: 'serif' | 'handwriting' | 'mono'
 }
 
 export const DEFAULT_SETTINGS: DevNotesSettings = {
@@ -25,6 +29,10 @@ export const DEFAULT_SETTINGS: DevNotesSettings = {
   highlightColor: HIGHLIGHT_COLORS[0],
   trashRetentionDays: 180,
   historyDepth: 20,
+  highlightStyle: 'marker',
+  penSet: 'marker',
+  paperTone: 'cream',
+  noteFont: 'serif',
 }
 
 export const DEFAULT_BLOCKED_HOSTS = [
@@ -60,6 +68,10 @@ export function normalizeSettings(value: unknown): DevNotesSettings {
     highlightColor: HIGHLIGHT_COLORS.includes(raw.highlightColor as typeof HIGHLIGHT_COLORS[number]) ? raw.highlightColor as string : DEFAULT_SETTINGS.highlightColor,
     trashRetentionDays: typeof raw.trashRetentionDays === 'number' ? Math.min(3650, Math.max(30, Math.round(raw.trashRetentionDays))) : DEFAULT_SETTINGS.trashRetentionDays,
     historyDepth: typeof raw.historyDepth === 'number' ? Math.min(100, Math.max(1, Math.round(raw.historyDepth))) : DEFAULT_SETTINGS.historyDepth,
+    highlightStyle: ['marker', 'underline', 'box', 'bracket'].includes(raw.highlightStyle as string) ? raw.highlightStyle as DevNotesSettings['highlightStyle'] : DEFAULT_SETTINGS.highlightStyle,
+    penSet: ['marker', 'pencil', 'fountain'].includes(raw.penSet as string) ? raw.penSet as DevNotesSettings['penSet'] : DEFAULT_SETTINGS.penSet,
+    paperTone: ['cream', 'sepia', 'grey', 'night'].includes(raw.paperTone as string) ? raw.paperTone as DevNotesSettings['paperTone'] : DEFAULT_SETTINGS.paperTone,
+    noteFont: ['serif', 'handwriting', 'mono'].includes(raw.noteFont as string) ? raw.noteFont as DevNotesSettings['noteFont'] : DEFAULT_SETTINGS.noteFont,
   }
 }
 
