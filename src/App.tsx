@@ -1,6 +1,7 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
+import { DEFAULT_BLOCKED_HOSTS, DEFAULT_SETTINGS, HIGHLIGHT_COLORS, SETTINGS_KEY, hostMatches, isHostDisabled, normalizeHost, normalizeSettings, readSettings, writeSettings, type DevNotesSettings } from './settings'
 
 type Note = { id: string; title: string; body: string; tags?: string[]; collectionIds?: string[]; pinned?: boolean; favorite?: boolean; archived?: boolean; history?: Revision[]; createdAt: number; updatedAt: number }
 type Revision = { id: string; title: string; body: string; savedAt: number }
@@ -8,13 +9,18 @@ type PageNotes = Record<string, Note[]>
 type Collection = { id: string; name: string; createdAt: number }
 type Highlight = { id: string; noteId?: string; text: string; prefix: string; suffix: string; color: string; createdAt: number }
 type TrashEntry = { note: Note; url: string; deletedAt: number }
-type BackupFile = { format: 'devnotes-backup'; version: number; pages: PageNotes; collections: Collection[]; highlights: Record<string, Highlight[]>; trash: TrashEntry[] }
+type BackupFile = { format: 'devnotes-backup'; version: number; pages: PageNotes; collections: Collection[]; highlights: Record<string, Highlight[]>; trash: TrashEntry[]; settings?: DevNotesSettings }
 
 const STORAGE_KEY = 'devnotes-pages'
 const DELETED_KEY = 'devnotes-deleted-notes'
 const HIGHLIGHT_KEY = 'devnotes-highlights'
 const COLLECTION_KEY = 'devnotes-collections'
 const TRASH_KEY = 'devnotes-trash'
+const NOTE_TEMPLATES = {
+  'Bug report': '# Bug report\n\n## Summary\n\n## Steps to reproduce\n1. \n\n## Expected behavior\n\n## Actual behavior\n\n## Environment\n',
+  'Meeting notes': '# Meeting notes\n\nDate: \nAttendees: \n\n## Agenda\n\n## Notes\n\n## Decisions\n\n## Action items\n- [ ] \n',
+  'Reading note': '# Reading note\n\n## Summary\n\n## Key ideas\n- \n\n## Quotes\n> \n\n## My thoughts\n\n## Follow-up\n',
+} as const
 function normalizePageUrl(href: string) {
   const url = new URL(href)
   url.hash = ''
@@ -86,7 +92,7 @@ function validateBackup(value: unknown): BackupFile | null {
   const trash = value.trash === undefined ? [] : value.trash
   if (!Array.isArray(trash) || trash.some((item) => !isRecord(item) || typeof item.url !== 'string' || typeof item.deletedAt !== 'number' || validatePageNotes({ [item.url]: [item.note] }) === null)) return null
   const normalizedTrash = (trash as TrashEntry[]).map((item) => ({ ...item, url: normalizePageUrl(item.url) }))
-  return { format: 'devnotes-backup', version: value.version, pages, collections: collections as Collection[], highlights: normalizedHighlights, trash: normalizedTrash }
+  return { format: 'devnotes-backup', version: value.version, pages, collections: collections as Collection[], highlights: normalizedHighlights, trash: normalizedTrash, settings: value.settings === undefined ? undefined : normalizeSettings(value.settings) }
 }
 
 function mergePages(current: PageNotes, incoming: PageNotes): PageNotes {
@@ -236,18 +242,18 @@ function writeCollections(collections: Collection[]): Promise<void> {
 function readTrash(): Promise<TrashEntry[]> {
   return new Promise((resolve) => {
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {
-      chrome.storage.local.get(TRASH_KEY, (result) => resolve(boundedTrash((result[TRASH_KEY] as TrashEntry[] | undefined) ?? [])))
+      chrome.storage.local.get(TRASH_KEY, (result) => resolve(boundedTrash((result[TRASH_KEY] as TrashEntry[] | undefined) ?? [], 3650)))
       return
     }
     if (typeof chrome !== 'undefined' && chrome.runtime) { resolve([]); return }
-    try { resolve(boundedTrash(JSON.parse(localStorage.getItem(TRASH_KEY) ?? '[]'))) } catch { resolve([]) }
+    try { resolve(boundedTrash(JSON.parse(localStorage.getItem(TRASH_KEY) ?? '[]'), 3650)) } catch { resolve([]) }
   })
 }
 
-function writeTrash(trash: TrashEntry[]): Promise<void> {
+function writeTrash(trash: TrashEntry[], retentionDays = DEFAULT_SETTINGS.trashRetentionDays): Promise<void> {
   return new Promise((resolve, reject) => {
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {
-      chrome.storage.local.set({ [TRASH_KEY]: boundedTrash(trash) }, () => {
+      chrome.storage.local.set({ [TRASH_KEY]: boundedTrash(trash, retentionDays) }, () => {
         const error = chrome.runtime.lastError
         if (error) reject(new Error(error.message))
         else resolve()
@@ -255,12 +261,12 @@ function writeTrash(trash: TrashEntry[]): Promise<void> {
       return
     }
     if (typeof chrome !== 'undefined' && chrome.runtime) { reject(new Error('Chrome storage is unavailable.')); return }
-    try { localStorage.setItem(TRASH_KEY, JSON.stringify(boundedTrash(trash))); resolve() } catch (error) { reject(error) }
+    try { localStorage.setItem(TRASH_KEY, JSON.stringify(boundedTrash(trash, retentionDays))); resolve() } catch (error) { reject(error) }
   })
 }
 
-function boundedTrash(items: TrashEntry[]): TrashEntry[] {
-  const cutoff = Date.now() - 180 * 24 * 60 * 60 * 1000
+function boundedTrash(items: TrashEntry[], retentionDays = DEFAULT_SETTINGS.trashRetentionDays): TrashEntry[] {
+  const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000
   const valid: TrashEntry[] = []
   for (const item of items) {
     if (!item || typeof item.deletedAt !== 'number' || item.deletedAt < cutoff || typeof item.url !== 'string' || typeof item.note?.id !== 'string') continue
@@ -306,9 +312,10 @@ function wrapTextOffsets(nodes: Text[], start: number, end: number, id: string, 
   }
 }
 
-function applyHighlights(highlights: Highlight[]) {
-  if (!document.body) return
+function applyHighlights(highlights: Highlight[]): string[] {
+  if (!document.body) return []
   clearPageHighlights()
+  const orphaned: string[] = []
   for (const item of highlights) {
     if (!item.text) continue
     const nodes = pageTextNodes()
@@ -321,7 +328,9 @@ function applyHighlights(highlights: Highlight[]) {
       index = text.indexOf(item.text, index + 1)
     }
     if (index >= 0) wrapTextOffsets(nodes, index, index + item.text.length, item.id, item.color)
+    else orphaned.push(item.id)
   }
+  return orphaned
 }
 
 function clearPageHighlights() {
@@ -362,6 +371,50 @@ function TagInput({ tags, onCommit }: { tags: string[]; onCommit: (tags: string[
   }} />
 }
 
+type SearchQuery = { terms: string[]; tags: string[]; sites: string[]; flags: string[]; after?: number; before?: number }
+
+function parseSearchQuery(query: string): SearchQuery {
+  const parsed: SearchQuery = { terms: [], tags: [], sites: [], flags: [] }
+  const tokens = query.match(/(?:[^\s"]+|"[^"]*")+/g) ?? []
+  for (const token of tokens) {
+    const split = token.indexOf(':')
+    if (split < 0) { parsed.terms.push(token.replace(/^"|"$/g, '').toLowerCase()); continue }
+    const key = token.slice(0, split).toLowerCase()
+    const value = token.slice(split + 1).replace(/^"|"$/g, '').toLowerCase()
+    if (key === 'tag' && value) parsed.tags.push(value)
+    else if ((key === 'site' || key === 'domain') && value) parsed.sites.push(value)
+    else if (key === 'is' && value) parsed.flags.push(value)
+    else if (key === 'after' && /^\d{4}-\d{2}-\d{2}$/.test(value)) parsed.after = new Date(`${value}T00:00:00`).getTime()
+    else if (key === 'before' && /^\d{4}-\d{2}-\d{2}$/.test(value)) parsed.before = new Date(`${value}T23:59:59`).getTime()
+    else parsed.terms.push(token.toLowerCase())
+  }
+  return parsed
+}
+
+function fuzzyContains(haystack: string, term: string): boolean {
+  if (haystack.includes(term)) return true
+  if (term.length < 5) return false
+  const words = haystack.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean)
+  return words.some((word) => {
+    if (Math.abs(word.length - term.length) > 1) return false
+    let previous = Array.from({ length: term.length + 1 }, (_item, index) => index)
+    for (let row = 1; row <= word.length; row++) {
+      const current = [row]
+      for (let column = 1; column <= term.length; column++) current[column] = Math.min(current[column - 1] + 1, previous[column] + 1, previous[column - 1] + (word[row - 1] === term[column - 1] ? 0 : 1))
+      previous = current
+    }
+    return previous[term.length] <= 1
+  })
+}
+
+function SearchMatch({ text, query }: { text: string; query: string }) {
+  const terms = parseSearchQuery(query).terms.filter((term) => term.length > 1)
+  if (!terms.length) return <>{text}</>
+  const escaped = terms.sort((a, b) => b.length - a.length).map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  const parts = text.split(new RegExp(`(${escaped.join('|')})`, 'ig'))
+  return <>{parts.map((part, index) => terms.some((term) => term.toLowerCase() === part.toLowerCase()) ? <mark key={index}>{part}</mark> : part)}</>
+}
+
 function LinkNoteInput({ notes, onLink }: { notes: { note: Note; url: string }[]; onLink: (id: string, title: string) => void }) {
   const [selectedId, setSelectedId] = useState('')
   return <select className="dn-link-note" aria-label="Link another note" value={selectedId} onChange={(event) => {
@@ -373,6 +426,10 @@ function LinkNoteInput({ notes, onLink }: { notes: { note: Note; url: string }[]
 
 function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   const [open, setOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settings, setSettings] = useState<DevNotesSettings>(DEFAULT_SETTINGS)
+  const [settingsReady, setSettingsReady] = useState(false)
+  const [systemDark, setSystemDark] = useState(() => window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false)
   const [pageUrl, setPageUrl] = useState(() => normalizePageUrl(location.href))
   const [pageTitle, setPageTitle] = useState(() => document.title || location.hostname)
   const [pages, setPages] = useState<PageNotes>({})
@@ -381,8 +438,10 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   const [collectionsReady, setCollectionsReady] = useState(false)
   const [addingCollection, setAddingCollection] = useState(false)
   const [collectionDraft, setCollectionDraft] = useState('')
+  const [blocklistDraft, setBlocklistDraft] = useState('')
   const [trash, setTrash] = useState<TrashEntry[]>([])
   const [highlights, setHighlights] = useState<Highlight[]>([])
+  const [orphanedHighlights, setOrphanedHighlights] = useState<string[]>([])
   const [highlightsForUrl, setHighlightsForUrl] = useState('')
   const highlightsRef = useRef(highlights)
   const [showAllNotes, setShowAllNotes] = useState(false)
@@ -393,7 +452,10 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   const [showHistory, setShowHistory] = useState(false)
   const [sortMode, setSortMode] = useState<'updated' | 'created' | 'title'>('updated')
   const [domainFilter, setDomainFilter] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
   const [collectionFilter, setCollectionFilter] = useState('')
+  const [bulkSelection, setBulkSelection] = useState<string[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedPageUrl, setSelectedPageUrl] = useState(pageUrl)
   const [ready, setReady] = useState(false)
@@ -409,11 +471,14 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   const pagesVersionRef = useRef(0)
   const highlightsDirtyRef = useRef(false)
   const collectionsDirtyRef = useRef(false)
+  const settingsDirtyRef = useRef(false)
+  const settingsVersionRef = useRef(0)
   const isMac = /Mac|iPhone|iPad/.test(navigator.userAgent)
   const notes = useMemo(() => pages[pageUrl] ?? [], [pages, pageUrl])
   const selectedNotes = useMemo(() => pages[selectedPageUrl] ?? [], [pages, selectedPageUrl])
   const selected = selectedNotes.find((note) => note.id === selectedId) ?? null
   const hostname = location.hostname.replace(/^www\./, '') || 'This page'
+  const darkTheme = settings.theme === 'dark' || (settings.theme === 'system' && systemDark)
 
   useEffect(() => { highlightsRef.current = highlights }, [highlights])
 
@@ -428,14 +493,30 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       setReady(true)
     })
     void readCollections().then((saved) => { if (active) { setCollections(saved); setCollectionsReady(true) } })
-    void readTrash().then((saved) => { if (active) setTrash(saved) })
+    void readSettings().then((saved) => {
+      if (!active) return
+      setSettings(saved)
+      setSettingsReady(true)
+      void readTrash().then((items) => {
+        if (!active) return
+        const retained = boundedTrash(items, saved.trashRetentionDays)
+        setTrash(retained)
+        if (retained.length !== items.length) void writeTrash(retained, saved.trashRetentionDays)
+      })
+    })
     return () => { active = false }
   }, [])
 
   useEffect(() => {
     if (typeof chrome === 'undefined' || !chrome.storage?.onChanged) return
     const onStorageChanged = (changes: { [key: string]: chrome.storage.StorageChange }, area: string) => {
-      if (area !== 'local' || (!changes[STORAGE_KEY] && !changes[DELETED_KEY])) return
+      if (area !== 'local') return
+      if (changes[SETTINGS_KEY]) {
+        const nextSettings = normalizeSettings(changes[SETTINGS_KEY].newValue)
+        setSettings(nextSettings)
+        if (isHostDisabled(location.hostname, nextSettings)) messageTarget.dispatchEvent(new Event('devnotes-disable-site'))
+      }
+      if (!changes[STORAGE_KEY] && !changes[DELETED_KEY]) return
       void Promise.all([readPages(), readDeletedNotes()]).then(([incoming, deleted]) => {
         setDeletedNotes(deleted)
         setPages((current) => removeDeletedPages(mergePages(current, incoming), deleted))
@@ -443,6 +524,26 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     }
     chrome.storage.onChanged.addListener(onStorageChanged)
     return () => chrome.storage.onChanged.removeListener(onStorageChanged)
+  }, [messageTarget])
+
+  useEffect(() => {
+    if (!settingsReady || !settingsDirtyRef.current) return
+    const version = settingsVersionRef.current
+    const timer = window.setTimeout(() => {
+      if (!settingsDirtyRef.current) return
+      void writeSettings(settings).then(() => {
+        if (version === settingsVersionRef.current) settingsDirtyRef.current = false
+      }, () => setSaveState('error'))
+    }, 250)
+    return () => window.clearTimeout(timer)
+  }, [settings, settingsReady])
+
+  useEffect(() => {
+    const media = window.matchMedia?.('(prefers-color-scheme: dark)')
+    if (!media) return
+    const update = () => setSystemDark(media.matches)
+    media.addEventListener('change', update)
+    return () => media.removeEventListener('change', update)
   }, [])
 
   useEffect(() => {
@@ -469,14 +570,14 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       if (!active) return
       const pageHighlights = saved[pageUrl] ?? []
       setHighlights(pageHighlights)
-      applyHighlights(pageHighlights)
+      setOrphanedHighlights(applyHighlights(pageHighlights))
       setHighlightsForUrl(pageUrl)
       observer = new MutationObserver((mutations) => {
         const isDevNotesMark = (node: Node) => node instanceof HTMLElement && node.hasAttribute('data-devnotes-highlight')
         const pageChanged = mutations.some((mutation) => !Array.from(mutation.addedNodes).some(isDevNotesMark) && !Array.from(mutation.removedNodes).some(isDevNotesMark))
         if (!pageChanged) return
         window.clearTimeout(restoreTimer)
-        restoreTimer = window.setTimeout(() => applyHighlights(highlightsRef.current), 200)
+        restoreTimer = window.setTimeout(() => setOrphanedHighlights(applyHighlights(highlightsRef.current)), 200)
       })
       observer.observe(document.body, { childList: true, subtree: true })
     })
@@ -578,7 +679,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     const updated: Note = field === 'tags'
       ? { ...selected, tags: value as string[], updatedAt: Date.now() }
       : { ...selected, [field]: value as string, updatedAt: Date.now() }
-    if (shouldSnapshot) updated.history = [...history, { id: crypto.randomUUID(), title: selected.title, body: selected.body, savedAt: Date.now() }].slice(-20)
+    if (shouldSnapshot) updated.history = [...history, { id: crypto.randomUUID(), title: selected.title, body: selected.body, savedAt: Date.now() }].slice(-settings.historyDepth)
     persist({ ...pages, [selectedPageUrl]: selectedNotes.map((note) => note.id === selected.id ? updated : note) })
   }
 
@@ -587,9 +688,9 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     const remaining = selectedNotes.filter((note) => note.id !== selected.id)
     persist({ ...pages, [selectedPageUrl]: remaining })
     const deletedNoteId = selected.id
-    const nextTrash = boundedTrash([...trash, { note: selected, url: selectedPageUrl, deletedAt: Date.now() }])
+    const nextTrash = boundedTrash([...trash, { note: selected, url: selectedPageUrl, deletedAt: Date.now() }], settings.trashRetentionDays)
     setTrash(nextTrash)
-    void writeTrash(nextTrash)
+    void writeTrash(nextTrash, settings.trashRetentionDays)
     setDeletedNotes((items) => ({ ...items, [selected.id]: Date.now() }))
     void readHighlights().then((allHighlights) => {
       let changed = false
@@ -617,7 +718,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     persist({ ...pages, [entry.url]: [restored, ...(pages[entry.url] ?? [])] })
     const nextTrash = trash.filter((item) => item.note.id !== entry.note.id)
     setTrash(nextTrash)
-    void writeTrash(nextTrash)
+    void writeTrash(nextTrash, settings.trashRetentionDays)
     setSelectedPageUrl(entry.url)
     setSelectedId(restored.id)
     setShowTrash(false)
@@ -625,13 +726,24 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   }
 
   const allNotes = useMemo(() => Object.entries(pages).flatMap(([url, items]) => items.map((note) => ({ note, url }))), [pages])
+  const availableTags = useMemo(() => [...new Set(allNotes.flatMap(({ note }) => note.tags ?? []))].sort((a, b) => a.localeCompare(b)), [allNotes])
   const backlinks = useMemo(() => selected ? allNotes.filter(({ note }) => note.id !== selected.id && (note.body.toLowerCase().includes(`[[${selected.title.trim().toLowerCase()}]]`) || note.body.includes(`[[id:${selected.id}|`))) : [], [allNotes, selected])
   const filteredNotes = useMemo(() => {
     const source = showAllNotes || deferredQuery.trim() || showTasks ? allNotes : notes.map((note) => ({ note, url: pageUrl }))
-    const needle = deferredQuery.trim().toLowerCase()
-    return source.filter(({ note, url }) => Boolean(note.archived) === showArchived && (!showFavorites || Boolean(note.favorite)) && (!showTasks || /(?:^|\n)\s*[-*+]\s*\[ \]/.test(note.body)) && (!collectionFilter || note.collectionIds?.includes(collectionFilter)) && (!domainFilter || safeHostname(url).includes(domainFilter.toLowerCase())) && (!needle || `${note.title} ${note.body} ${(note.tags ?? []).join(' ')} ${url}`.toLowerCase().includes(needle)))
-      .sort((a, b) => Number(Boolean(b.note.pinned)) - Number(Boolean(a.note.pinned)) || (sortMode === 'title' ? a.note.title.localeCompare(b.note.title) : sortMode === 'created' ? b.note.createdAt - a.note.createdAt : b.note.updatedAt - a.note.updatedAt))
-  }, [allNotes, notes, pageUrl, deferredQuery, showAllNotes, collectionFilter, showArchived, showFavorites, showTasks, domainFilter, sortMode])
+    const parsed = parseSearchQuery(deferredQuery)
+    const from = dateFrom ? new Date(`${dateFrom}T00:00:00`).getTime() : parsed.after
+    const to = dateTo ? new Date(`${dateTo}T23:59:59`).getTime() : parsed.before
+    const matches = source.filter(({ note, url }) => {
+      const tags = (note.tags ?? []).map((tag) => tag.toLowerCase())
+      const searchable = `${note.title} ${note.body} ${tags.join(' ')} ${url}`.toLowerCase()
+      const task = /(?:^|\n)\s*[-*+]\s*\[ \]/.test(note.body)
+      const quoted = /^\s*>/m.test(note.body)
+      const host = safeHostname(url).toLowerCase()
+      return Boolean(note.archived) === showArchived && (!showFavorites || Boolean(note.favorite)) && (!showTasks || task) && (!collectionFilter || note.collectionIds?.includes(collectionFilter)) && (!domainFilter || host.includes(domainFilter.toLowerCase())) && parsed.tags.every((tag) => tags.some((existing) => existing.includes(tag))) && parsed.sites.every((site) => host.includes(site)) && parsed.flags.every((flag) => flag === 'task' ? task : flag === 'favorite' ? Boolean(note.favorite) : flag === 'pinned' ? Boolean(note.pinned) : flag === 'quote' ? quoted : flag === 'archived' ? Boolean(note.archived) : true) && (!from || note.updatedAt >= from) && (!to || note.updatedAt <= to) && parsed.terms.every((term) => fuzzyContains(searchable, term))
+    })
+    const rank = (note: Note, url: string) => parsed.terms.reduce((score, term) => score + (note.title.toLowerCase().includes(term) ? 8 : note.body.toLowerCase().includes(term) ? 4 : safeHostname(url).toLowerCase().includes(term) ? 3 : 1), 0)
+    return matches.sort((a, b) => Number(Boolean(b.note.pinned)) - Number(Boolean(a.note.pinned)) || (parsed.terms.length ? rank(b.note, b.url) - rank(a.note, a.url) : sortMode === 'title' ? a.note.title.localeCompare(b.note.title) : sortMode === 'created' ? b.note.createdAt - a.note.createdAt : b.note.updatedAt - a.note.updatedAt))
+  }, [allNotes, notes, pageUrl, deferredQuery, showAllNotes, collectionFilter, showArchived, showFavorites, showTasks, domainFilter, sortMode, dateFrom, dateTo])
 
   const updateSelected = (patch: Partial<Note>) => {
     if (!selected) return
@@ -641,7 +753,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   const restoreRevision = (revision: Revision) => {
     if (!selected) return
     const current: Revision = { id: crypto.randomUUID(), title: selected.title, body: selected.body, savedAt: Date.now() }
-    updateSelected({ title: revision.title, body: revision.body, history: [...(selected.history ?? []), current].slice(-20) })
+    updateSelected({ title: revision.title, body: revision.body, history: [...(selected.history ?? []), current].slice(-settings.historyDepth) })
     setShowHistory(false)
   }
 
@@ -676,8 +788,62 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     persist(next)
   }
 
+  const bulkUpdate = (transform: (note: Note) => Note) => {
+    if (!bulkSelection.length) return
+    const selectedIds = new Set(bulkSelection)
+    const next = Object.fromEntries(Object.entries(pages).map(([url, items]) => [url, items.map((note) => selectedIds.has(note.id) ? { ...transform(note), updatedAt: Date.now() } : note)]))
+    persist(next)
+    setBulkSelection([])
+  }
+
+  const applyBulkTags = () => {
+    const input = window.prompt('Tags to add (comma separated):')
+    if (input === null) return
+    const additions = input.split(',').map((tag) => tag.trim()).filter(Boolean)
+    bulkUpdate((note) => ({ ...note, tags: [...new Map([...(note.tags ?? []), ...additions].map((tag) => [tag.toLowerCase(), tag])).values()] }))
+  }
+
+  const createFromTemplate = (template: keyof typeof NOTE_TEMPLATES) => {
+    createNote(NOTE_TEMPLATES[template], template)
+  }
+
   const createCollection = () => {
     setAddingCollection(true)
+  }
+
+  const updateSettings = (patch: Partial<DevNotesSettings>) => {
+    settingsVersionRef.current += 1
+    settingsDirtyRef.current = true
+    setSettings((current) => normalizeSettings({ ...current, ...patch }))
+  }
+
+  const disableOnThisSite = async () => {
+    const host = normalizeHost(location.hostname)
+    const next = normalizeSettings({
+      ...settings,
+      disabledHosts: [...settings.disabledHosts.filter((item) => item !== host), host],
+      enabledHosts: settings.enabledHosts.filter((item) => item !== host),
+    })
+    setSettings(next)
+    settingsVersionRef.current += 1
+    settingsDirtyRef.current = false
+    try { await writeSettings(next) } catch {
+      setSettings(settings)
+      setSaveState('error')
+      return
+    }
+    messageTarget.dispatchEvent(new Event('devnotes-disable-site'))
+  }
+
+  const addBlockedHost = (host: string) => {
+    const normalized = normalizeHost(host)
+    try { if (new URL(`https://${normalized}`).hostname !== normalized) return } catch { return }
+    updateSettings({ disabledHosts: [...settings.disabledHosts, normalized], enabledHosts: settings.enabledHosts.filter((item) => item !== normalized) })
+  }
+
+  const allowHost = (host: string) => {
+    const normalized = normalizeHost(host)
+    updateSettings({ enabledHosts: [...settings.enabledHosts, normalized], disabledHosts: settings.disabledHosts.filter((item) => item !== normalized) })
   }
 
   const saveCollection = () => {
@@ -718,7 +884,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   }
 
   const exportJSON = async () => {
-    const backup = { format: 'devnotes-backup', version: 1, exportedAt: new Date().toISOString(), pages, collections, highlights: await readHighlights(), trash }
+    const backup = { format: 'devnotes-backup', version: 1, exportedAt: new Date().toISOString(), pages, collections, highlights: await readHighlights(), trash, settings }
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json;charset=utf-8' })
     const link = document.createElement('a')
     link.href = URL.createObjectURL(blob)
@@ -734,7 +900,8 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       if (!backup) { setImportError('That file is not a valid DevNotes backup.'); return }
       const importedPages = backup.pages
       const importedCollections = backup.collections
-      const importedTrash = boundedTrash(backup.trash)
+      const importedSettings = backup.settings ?? settings
+      const importedTrash = boundedTrash(backup.trash, importedSettings.trashRetentionDays)
       const importedHighlights = backup.highlights
       clearPageHighlights()
       setPages(importedPages)
@@ -742,8 +909,12 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       setDeletedNotes({})
       setCollections(importedCollections)
       setTrash(importedTrash)
+      setSettings(importedSettings)
+      settingsVersionRef.current += 1
+      settingsDirtyRef.current = false
       setHighlights(importedHighlights[pageUrl] ?? [])
       highlightsRef.current = importedHighlights[pageUrl] ?? []
+      setOrphanedHighlights([])
       setHighlightsForUrl(pageUrl)
       setSelectedPageUrl(pageUrl)
       setSelectedId(importedPages[pageUrl]?.[0]?.id ?? null)
@@ -751,7 +922,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       collectionsDirtyRef.current = false
       highlightsDirtyRef.current = false
       if (typeof chrome !== 'undefined' && chrome.storage?.local) {
-        await new Promise<void>((resolve, reject) => chrome.storage.local.set({ [STORAGE_KEY]: importedPages, [DELETED_KEY]: {}, [COLLECTION_KEY]: importedCollections, [TRASH_KEY]: importedTrash, [HIGHLIGHT_KEY]: importedHighlights }, () => chrome.runtime.lastError ? reject(new Error(chrome.runtime.lastError.message)) : resolve()))
+        await new Promise<void>((resolve, reject) => chrome.storage.local.set({ [STORAGE_KEY]: importedPages, [DELETED_KEY]: {}, [COLLECTION_KEY]: importedCollections, [TRASH_KEY]: importedTrash, [HIGHLIGHT_KEY]: importedHighlights, [SETTINGS_KEY]: importedSettings }, () => chrome.runtime.lastError ? reject(new Error(chrome.runtime.lastError.message)) : resolve()))
       } else if (typeof chrome !== 'undefined' && chrome.runtime) {
         throw new Error('Chrome storage is unavailable.')
       } else {
@@ -760,8 +931,9 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
         localStorage.setItem(COLLECTION_KEY, JSON.stringify(importedCollections))
         localStorage.setItem(TRASH_KEY, JSON.stringify(importedTrash))
         localStorage.setItem(HIGHLIGHT_KEY, JSON.stringify(importedHighlights))
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify(importedSettings))
       }
-      applyHighlights(importedHighlights[pageUrl] ?? [])
+      setOrphanedHighlights(applyHighlights(importedHighlights[pageUrl] ?? []))
       setImportError('Backup restored.')
     } catch { setImportError('Could not read this backup file.') }
   }
@@ -780,19 +952,28 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       id: crypto.randomUUID(), text,
       prefix: pageText.slice(Math.max(0, start - 24), start),
       suffix: pageText.slice(start + text.length, start + text.length + 24),
-      color: '#f6e58d', createdAt: Date.now(),
+      color: settings.highlightColor, createdAt: Date.now(),
     }
     wrapTextOffsets(pageTextNodes(), start, start + text.length, item.id, item.color)
-    item.noteId = createNote(`> ${text}\n\n`)
+    const quoteJump = `${pageUrl}#:~:text=${encodeURIComponent(text.slice(0, 120))}`
+    item.noteId = createNote(`> ${text}\n\nSource: [Jump back to quote](${quoteJump})\n\n`)
     const next = [...highlights, item]
     highlightsDirtyRef.current = true
+    setOrphanedHighlights((items) => items.filter((id) => id !== item.id))
     setHighlights(next)
-  }, [createNote, highlights])
+  }, [createNote, highlights, pageUrl, settings.highlightColor])
 
   const clipArticle = () => {
-    const main = document.querySelector<HTMLElement>('article, main, [role="main"]')
-    const content = (main?.innerText || document.body.innerText).trim().slice(0, 24_000)
-    createNote(`${content}${content.length >= 24_000 ? '\n\n[Clip shortened to 24,000 characters]' : ''}\n\nSource: ${pageUrl}`, `Clip: ${pageTitle}`)
+    const candidates = Array.from(document.querySelectorAll<HTMLElement>('article, main, [role="main"]'))
+      .sort((a, b) => (b.innerText?.length ?? 0) - (a.innerText?.length ?? 0))
+    const clone = (candidates[0] ?? document.body).cloneNode(true) as HTMLElement
+    clone.querySelectorAll('nav, aside, footer, header, form, button, script, style, noscript, [aria-hidden="true"], [data-devnotes-highlight], #devnotes-root, [class*="advert" i], [id*="advert" i]').forEach((element) => element.remove())
+    const content = (clone.innerText || clone.textContent || '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, 24_000)
+    const author = document.querySelector<HTMLMetaElement>('meta[name="author"], meta[property="article:author"]')?.content?.trim()
+    const published = document.querySelector<HTMLMetaElement>('meta[property="article:published_time"], meta[name="date"], meta[name="publish_date"]')?.content?.trim()
+    const favicon = document.querySelector<HTMLLinkElement>('link[rel~="icon"]')?.href
+    const metadata = [`# ${pageTitle}`, `Source: ${pageUrl}`, author ? `Author: ${author}` : '', published ? `Published: ${published}` : '', favicon ? `Favicon: ${favicon}` : ''].filter(Boolean).join('\n\n')
+    createNote(`${metadata}\n\n---\n\n${content}${content.length >= 24_000 ? '\n\n[Clip shortened to 24,000 characters]' : ''}`, `Clip: ${pageTitle}`)
   }
 
   useEffect(() => {
@@ -810,22 +991,27 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   }, [captureSelection, createNote, messageTarget])
 
   return <>
-    {!open && <button className="dn-launcher" onClick={() => setOpen(true)} aria-label="Open DevNotes" title="DevNotes"><span className="dn-mark">d<span>.</span></span></button>}
-    <aside className={`dn-panel ${open ? 'is-open' : ''}`} aria-label="DevNotes panel" aria-hidden={!open}>
+    {!open && !settings.hideLauncher && <button className={`dn-launcher ${settings.launcherPosition === 'bottom-left' ? 'dn-launcher-left' : ''}`} onClick={() => setOpen(true)} aria-label="Open DevNotes" title="DevNotes"><span className="dn-mark">d<span>.</span></span></button>}
+    <aside className={`dn-panel ${open ? 'is-open' : ''} ${settings.panelSide === 'left' ? 'dn-panel-left' : ''} ${darkTheme ? 'dn-dark' : ''}`} style={{ width: `min(${settings.panelWidth}px, 100vw)`, left: settings.panelSide === 'left' ? 0 : 'auto', right: settings.panelSide === 'right' ? 0 : 'auto' }} aria-label="DevNotes panel" aria-hidden={!open}>
       <header className="dn-header">
         <div className="dn-brand"><span className="dn-brand-icon">d<span>.</span></span><span>devnotes</span></div>
+        <button className="dn-icon-button dn-site-disable" onClick={() => void disableOnThisSite()} aria-label={`Disable DevNotes on ${hostname}`} title="Disable on this site">◉</button>
+        <button className="dn-icon-button" onClick={() => setSettingsOpen(true)} aria-label="Open DevNotes settings" title="Settings">⚙</button>
         <button className="dn-icon-button" onClick={() => setOpen(false)} aria-label="Close panel">×</button>
       </header>
+      {settingsOpen && <section className="dn-settings" role="dialog" aria-label="DevNotes settings"><div className="dn-settings-heading"><div><strong>Settings</strong><span>Preferences are stored on this device.</span></div><button className="dn-icon-button" onClick={() => setSettingsOpen(false)} aria-label="Close settings">×</button></div><div className="dn-settings-content"><label>Theme<select value={settings.theme} onChange={(event) => updateSettings({ theme: event.target.value as DevNotesSettings['theme'] })}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label><label>Panel side<select value={settings.panelSide} onChange={(event) => updateSettings({ panelSide: event.target.value as DevNotesSettings['panelSide'] })}><option value="right">Right</option><option value="left">Left</option></select></label><label>Panel width <span>{settings.panelWidth}px</span><input type="range" min="360" max="720" step="10" value={settings.panelWidth} onChange={(event) => updateSettings({ panelWidth: Number(event.target.value) })} /></label><label>Launcher position<select value={settings.launcherPosition} onChange={(event) => updateSettings({ launcherPosition: event.target.value as DevNotesSettings['launcherPosition'] })}><option value="bottom-right">Bottom right</option><option value="bottom-left">Bottom left</option></select></label><label className="dn-settings-check"><input type="checkbox" checked={settings.hideLauncher} onChange={(event) => updateSettings({ hideLauncher: event.target.checked })} />Hide the floating launcher</label><fieldset><legend>Default highlight color</legend><div className="dn-setting-colors">{HIGHLIGHT_COLORS.map((color) => <button key={color} type="button" className={settings.highlightColor === color ? 'selected' : ''} style={{ background: color }} aria-label={`Use highlight color ${color}`} onClick={() => updateSettings({ highlightColor: color })} />)}</div></fieldset><label>Trash retention <span>{settings.trashRetentionDays} days</span><input type="range" min="30" max="3650" step="30" value={settings.trashRetentionDays} onChange={(event) => updateSettings({ trashRetentionDays: Number(event.target.value) })} /></label><label>Version history <span>{settings.historyDepth} versions</span><input type="range" min="1" max="100" value={settings.historyDepth} onChange={(event) => updateSettings({ historyDepth: Number(event.target.value) })} /></label><div className="dn-site-settings"><strong>This site · {hostname}</strong><button onClick={() => void disableOnThisSite()}>Disable DevNotes on this site</button></div><form className="dn-blocklist-add" onSubmit={(event) => { event.preventDefault(); addBlockedHost(blocklistDraft); setBlocklistDraft('') }}><label htmlFor="dn-block-host">Block another site</label><div><input id="dn-block-host" value={blocklistDraft} onChange={(event) => setBlocklistDraft(event.target.value)} placeholder="example.com" /><button type="submit">Add</button></div></form><div className="dn-blocklist"><strong>Blocked sites</strong>{settings.disabledHosts.length ? settings.disabledHosts.map((host) => <div key={host}><span>{host}</span><button aria-label={`Unblock ${host}`} onClick={() => allowHost(host)}>Allow</button></div>) : <small>No custom sites blocked.</small>}<strong>Default protected sites</strong>{DEFAULT_BLOCKED_HOSTS.map((host) => { const allowed = settings.enabledHosts.some((rule) => hostMatches(hostname, rule)) && hostMatches(hostname, host); return <div key={host}><span>{host}</span><button aria-label={`${allowed ? 'Block' : 'Allow'} DevNotes on ${host}`} onClick={() => allowed ? addBlockedHost(host) : allowHost(host)}>{allowed ? 'Block' : 'Allow'}</button></div> })}</div></div></section>}
       <div className="dn-page"><div className="dn-site-icon">{hostname[0]?.toUpperCase()}</div><div className="dn-page-copy"><strong>{hostname}</strong><span title={pageTitle}>{pageTitle}</span></div><button className="dn-clip" title="Clip the main article" onClick={clipArticle}>Clip</button><button className="dn-icon-button dn-more" title="Highlight selection and save as a note" aria-label="Capture selected text" onClick={captureSelection}>✳</button></div>
-      {highlights.length > 0 && <div className="dn-highlights"><strong>Page highlights · {highlights.length}</strong>{highlights.map((item) => <div className="dn-highlight-row" key={item.id}><button className="dn-highlight-quote" onClick={() => { if (item.noteId) { setSelectedPageUrl(pageUrl); setSelectedId(item.noteId) } }}>{item.text.slice(0, 45)}{item.text.length > 45 ? '…' : ''}</button><div className="dn-highlight-tools"><button title="Yellow" aria-label="Set highlight color to yellow" style={{ background: '#f6e58d' }} onClick={() => changeHighlightColor(item.id, '#f6e58d')} /><button title="Green" aria-label="Set highlight color to green" style={{ background: '#c8e6a0' }} onClick={() => changeHighlightColor(item.id, '#c8e6a0')} /><button title="Blue" aria-label="Set highlight color to blue" style={{ background: '#b7dff2' }} onClick={() => changeHighlightColor(item.id, '#b7dff2')} /><button title="Pink" aria-label="Set highlight color to pink" style={{ background: '#f2c5d2' }} onClick={() => changeHighlightColor(item.id, '#f2c5d2')} /><button className="dn-highlight-remove" title="Remove highlight" onClick={() => removeHighlight(item.id)}>×</button></div></div>)}</div>}
+      {highlights.length > 0 && <div className="dn-highlights"><strong>Page highlights · {highlights.length}</strong>{highlights.map((item) => <div className="dn-highlight-row" key={item.id}><button className="dn-highlight-quote" onClick={() => { document.querySelector<HTMLElement>(`[data-devnotes-highlight="${CSS.escape(item.id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }); if (item.noteId) { setSelectedPageUrl(pageUrl); setSelectedId(item.noteId) } }}>{item.text.slice(0, 45)}{item.text.length > 45 ? '…' : ''}</button>{orphanedHighlights.includes(item.id) && <span className="dn-orphan-badge">Not found</span>}<div className="dn-highlight-tools"><button title="Yellow" aria-label="Set highlight color to yellow" style={{ background: '#f6e58d' }} onClick={() => changeHighlightColor(item.id, '#f6e58d')} /><button title="Green" aria-label="Set highlight color to green" style={{ background: '#c8e6a0' }} onClick={() => changeHighlightColor(item.id, '#c8e6a0')} /><button title="Blue" aria-label="Set highlight color to blue" style={{ background: '#b7dff2' }} onClick={() => changeHighlightColor(item.id, '#b7dff2')} /><button title="Pink" aria-label="Set highlight color to pink" style={{ background: '#f2c5d2' }} onClick={() => changeHighlightColor(item.id, '#f2c5d2')} /><button className="dn-highlight-remove" title="Remove highlight" onClick={() => removeHighlight(item.id)}>×</button></div></div>)}</div>}
       <div className="dn-dashboard-tabs"><button className={!showAllNotes && !showTrash ? 'active' : ''} onClick={() => { setShowAllNotes(false); setShowArchived(false); setShowFavorites(false); setShowTasks(false); setShowTrash(false); setCollectionFilter('') }}>This page</button><button className={showAllNotes && !showArchived && !showFavorites && !showTasks && !showTrash ? 'active' : ''} onClick={() => { setShowAllNotes(true); setShowArchived(false); setShowFavorites(false); setShowTasks(false); setShowTrash(false) }}>All notes</button><button className={showTasks ? 'active' : ''} onClick={() => { setShowAllNotes(true); setShowArchived(false); setShowFavorites(false); setShowTasks(true); setShowTrash(false) }}>Tasks</button><button className={showFavorites ? 'active' : ''} onClick={() => { setShowAllNotes(true); setShowArchived(false); setShowFavorites(true); setShowTasks(false); setShowTrash(false) }}>Favorites</button><button className={showArchived ? 'active' : ''} onClick={() => { setShowAllNotes(true); setShowArchived(true); setShowFavorites(false); setShowTasks(false); setShowTrash(false) }}>Archived</button><button className={showTrash ? 'active' : ''} onClick={() => { setShowAllNotes(true); setShowTrash(true); setShowArchived(false); setShowFavorites(false); setShowTasks(false) }}>Trash</button></div>
-      <div className="dn-page-heading"><h1>{showTrash ? 'Trash' : showArchived ? 'Archived' : showTasks ? 'Tasks' : showFavorites ? 'Favorites' : showAllNotes ? 'All notes' : 'Page notes'} <span>{showTrash ? trash.length : showArchived ? allNotes.filter(({ note }) => note.archived).length : showTasks ? allNotes.filter(({ note }) => !note.archived && /(?:^|\n)\s*[-*+]\s*\[ \]/.test(note.body)).length : showFavorites ? allNotes.filter(({ note }) => note.favorite && !note.archived).length : showAllNotes ? allNotes.filter(({ note }) => !note.archived).length : notes.filter((note) => !note.archived).length}</span></h1><div className="dn-heading-actions"><button className="dn-export" onClick={exportMarkdown} disabled={!allNotes.length} title="Export all notes as Markdown">MD</button><button className="dn-export" onClick={() => void exportJSON()} title="Export JSON backup">Backup</button><button className="dn-export" onClick={() => importRef.current?.click()} title="Import JSON backup">Import</button><input ref={importRef} type="file" accept="application/json,.json" hidden onChange={(event) => { void importJSON(event.target.files?.[0]); event.currentTarget.value = '' }} /><button className="dn-new" onClick={() => createNote()}><b>＋</b> New note</button></div></div>
-      {showAllNotes && <div className="dn-collection-bar"><select aria-label="Filter by collection" value={collectionFilter} onChange={(event) => setCollectionFilter(event.target.value)}><option value="">All collections</option>{collections.map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select><input className="dn-domain-filter" aria-label="Filter by website domain" placeholder="Domain" value={domainFilter} onChange={(event) => setDomainFilter(event.target.value)} /><select aria-label="Sort notes" value={sortMode} onChange={(event) => setSortMode(event.target.value as typeof sortMode)}><option value="updated">Updated</option><option value="created">Created</option><option value="title">Title</option></select><button className="dn-collection-add" onClick={createCollection}>＋</button></div>}
+      <div className="dn-page-heading"><h1>{showTrash ? 'Trash' : showArchived ? 'Archived' : showTasks ? 'Tasks' : showFavorites ? 'Favorites' : showAllNotes ? 'All notes' : 'Page notes'} <span>{showTrash ? trash.length : showArchived ? allNotes.filter(({ note }) => note.archived).length : showTasks ? allNotes.filter(({ note }) => !note.archived && /(?:^|\n)\s*[-*+]\s*\[ \]/.test(note.body)).length : showFavorites ? allNotes.filter(({ note }) => note.favorite && !note.archived).length : showAllNotes ? allNotes.filter(({ note }) => !note.archived).length : notes.filter((note) => !note.archived).length}</span></h1><div className="dn-heading-actions"><button className="dn-export" onClick={exportMarkdown} disabled={!allNotes.length} title="Export all notes as Markdown">MD</button><button className="dn-export" onClick={() => void exportJSON()} title="Export JSON backup">Backup</button><button className="dn-export" onClick={() => importRef.current?.click()} title="Import JSON backup">Import</button><input ref={importRef} type="file" accept="application/json,.json" hidden onChange={(event) => { void importJSON(event.target.files?.[0]); event.currentTarget.value = '' }} /><select className="dn-template-select" aria-label="Create note from template" value="" onChange={(event) => { if (event.target.value) createFromTemplate(event.target.value as keyof typeof NOTE_TEMPLATES) }}><option value="">Template…</option>{Object.keys(NOTE_TEMPLATES).map((name) => <option key={name} value={name}>{name}</option>)}</select><button className="dn-new" onClick={() => createNote()}><b>＋</b> New note</button></div></div>
+      {showAllNotes && <div className="dn-collection-bar"><select aria-label="Filter by collection" value={collectionFilter} onChange={(event) => setCollectionFilter(event.target.value)}><option value="">All collections</option>{collections.map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select><input className="dn-domain-filter" aria-label="Filter by website domain" placeholder="Domain" value={domainFilter} onChange={(event) => setDomainFilter(event.target.value)} /><select aria-label="Sort notes" value={sortMode} onChange={(event) => setSortMode(event.target.value as typeof sortMode)}><option value="updated">Updated</option><option value="created">Created</option><option value="title">Title</option></select><input aria-label="Updated after" title="Updated after" type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} /><input aria-label="Updated before" title="Updated before" type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} /><button className="dn-collection-add" onClick={createCollection}>＋</button></div>}
+      {showAllNotes && availableTags.length > 0 && <div className="dn-tag-browser"><strong>Tags</strong>{availableTags.map((tag) => <button key={tag} onClick={() => setQuery((value) => `${value} tag:"${tag}"`.trim())}>{tag}</button>)}</div>}
+      {showAllNotes && bulkSelection.length > 0 && <div className="dn-bulk-actions"><strong>{bulkSelection.length} selected</strong><button onClick={applyBulkTags}>Add tags</button><button onClick={() => bulkUpdate((note) => ({ ...note, archived: true }))}>Archive</button><button onClick={() => setBulkSelection([])}>Clear</button></div>}
       {addingCollection && <form className="dn-new-collection" onSubmit={(event) => { event.preventDefault(); saveCollection() }}><input autoFocus aria-label="Collection name" placeholder="Collection name" value={collectionDraft} onChange={(event) => setCollectionDraft(event.target.value)} /><button type="submit">Create</button><button type="button" onClick={() => { setAddingCollection(false); setCollectionDraft('') }}>Cancel</button></form>}
       <label className="dn-search"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.8" cy="8.8" r="5.8"/><path d="m13.2 13.2 4 4"/></svg><input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search notes" /><kbd>{isMac ? '⌘' : 'Ctrl'} K</kbd></label>
       {importError && <div className="dn-import-status" role="status">{importError}<button aria-label="Dismiss message" onClick={() => setImportError('')}>×</button></div>}
       {!ready ? <div className="dn-empty">Loading your notes…</div> : showTrash ? <div className="dn-trash-list">{trash.length ? trash.map((entry) => <div className="dn-trash-row" key={entry.note.id}><span><strong>{entry.note.title || 'Untitled note'}</strong><small>{safeHostname(entry.url)}</small></span><button className="dn-preview-toggle" onClick={() => restoreFromTrash(entry)}>Restore</button><button className="dn-delete" onClick={() => { const next = trash.filter((item) => item.note.id !== entry.note.id); setTrash(next); void writeTrash(next) }}>Delete forever</button></div>) : <div className="dn-empty">Trash is empty.</div>}</div> : !showAllNotes && notes.length === 0 && !query.trim() ? <div className="dn-empty-state"><div className="dn-empty-icon">✎</div><strong>A fresh page to think on.</strong><p>Keep the useful bits, questions, and ideas you find here.</p><button onClick={() => createNote()}>Write your first note <span>→</span></button><div className="dn-hint">TIP · SELECT TEXT ON THE PAGE, THEN TAP ✳</div></div> : filteredNotes.length === 0 ? <div className="dn-empty">{query.trim() ? `No notes match “${query}”.` : 'No notes here yet.'}</div> : <div className="dn-content">
-        <div className="dn-note-list">{filteredNotes.map(({ note, url }) => <div key={`${url}:${note.id}`} className={`dn-note-row-wrap ${selectedPageUrl === url && selectedId === note.id ? 'active' : ''}`}><button className="dn-note-row" onClick={() => { setSelectedPageUrl(url); setSelectedId(note.id) }}><span className="dn-note-dot"/><span className="dn-note-row-text"><strong>{note.pinned ? '📌 ' : ''}{note.title || 'Untitled note'}</strong><small>{showAllNotes || query ? safeHostname(url) + ' · ' : ''}{note.body.trim().replace(/^>\s?/gm, '').slice(0, 58) || 'No content yet'}</small></span></button><button className={`dn-row-action ${note.favorite ? 'selected' : ''}`} title={note.favorite ? 'Remove favorite' : 'Add favorite'} aria-label={note.favorite ? 'Remove favorite' : 'Add favorite'} onClick={() => toggleNoteFlag(note.id, 'favorite', url)}>{note.favorite ? '♥' : '♡'}</button><button className="dn-row-action" title={note.archived ? 'Restore from archive' : 'Archive note'} aria-label={note.archived ? 'Restore note' : 'Archive note'} onClick={() => toggleNoteFlag(note.id, 'archived', url)}>{note.archived ? '↶' : '▱'}</button></div>)}</div>
+        <div className="dn-note-list">{filteredNotes.map(({ note, url }) => <div key={`${url}:${note.id}`} className={`dn-note-row-wrap ${selectedPageUrl === url && selectedId === note.id ? 'active' : ''}`}>{showAllNotes && <input className="dn-bulk-check" type="checkbox" aria-label={`Select ${note.title || 'Untitled note'}`} checked={bulkSelection.includes(note.id)} onChange={(event) => setBulkSelection((ids) => event.target.checked ? [...ids, note.id] : ids.filter((id) => id !== note.id))} />}<button className="dn-note-row" onClick={() => { setSelectedPageUrl(url); setSelectedId(note.id) }}><span className="dn-note-dot"/><span className="dn-note-row-text"><strong>{note.pinned ? '📌 ' : ''}<SearchMatch text={note.title || 'Untitled note'} query={query} /></strong><small>{showAllNotes || query ? safeHostname(url) + ' · ' : ''}{note.body.trim().replace(/^>\s?/gm, '').slice(0, 58) || 'No content yet'}</small></span></button><button className={`dn-row-action ${note.favorite ? 'selected' : ''}`} title={note.favorite ? 'Remove favorite' : 'Add favorite'} aria-label={note.favorite ? 'Remove favorite' : 'Add favorite'} onClick={() => toggleNoteFlag(note.id, 'favorite', url)}>{note.favorite ? '♥' : '♡'}</button><button className="dn-row-action" title={note.archived ? 'Restore from archive' : 'Archive note'} aria-label={note.archived ? 'Restore note' : 'Archive note'} onClick={() => toggleNoteFlag(note.id, 'archived', url)}>{note.archived ? '↶' : '▱'}</button></div>)}</div>
         {selected ? <article className="dn-editor"><div className="dn-editor-top"><span className="dn-note-type">NOTE</span><div className="dn-editor-actions"><button className={`dn-preview-toggle ${selected.pinned ? 'active' : ''}`} onClick={() => updateSelected({ pinned: !selected.pinned })}>{selected.pinned ? 'Unpin' : 'Pin'}</button><button className={`dn-preview-toggle ${selected.favorite ? 'active' : ''}`} onClick={() => updateSelected({ favorite: !selected.favorite })}>{selected.favorite ? '♥ Favorite' : '♡ Favorite'}</button><button className="dn-preview-toggle" onClick={() => setShowHistory((value) => !value)}>History</button><button className={`dn-preview-toggle ${preview ? 'active' : ''}`} onClick={() => setPreview((value) => !value)} aria-pressed={preview}>{preview ? 'Edit' : 'Preview'}</button><button className="dn-delete" onClick={deleteNote} title="Move note to trash">Delete</button></div></div><input className="dn-title" placeholder="Give this note a title…" value={selected.title} onChange={(event) => updateNote('title', event.target.value)} />{showHistory && <div className="dn-history-list">{(selected.history ?? []).length ? [...(selected.history ?? [])].reverse().map((revision) => <button key={revision.id} onClick={() => restoreRevision(revision)}><strong>{revision.title || 'Untitled note'}</strong><small>{new Date(revision.savedAt).toLocaleString()} · Restore</small></button>) : <small>No saved versions yet. Versions are captured during editing.</small>}</div>}{preview ? <div className="dn-markdown-preview" onChange={(event) => { const input = event.target as HTMLInputElement; if (input.matches('input[data-task-index]')) setTaskStatus(Number(input.dataset.taskIndex), input.checked) }} onClick={(event) => { const target = event.target as HTMLElement; const copy = target.closest<HTMLButtonElement>('[data-copy-code]'); if (copy) { const code = copy.parentElement?.querySelector('code')?.textContent ?? ''; void navigator.clipboard?.writeText(code).then(() => { copy.textContent = 'Copied' }) } const anchor = target.closest('a'); const href = anchor?.getAttribute('href'); if (href?.startsWith('#devnotes-note-id-')) { event.preventDefault(); openLinkedNote('id:' + decodeURIComponent(href.slice('#devnotes-note-id-'.length))) } else if (href?.startsWith('#devnotes-note-')) { event.preventDefault(); openLinkedNote(decodeURIComponent(href.slice('#devnotes-note-'.length))) } }} dangerouslySetInnerHTML={{ __html: renderNoteMarkdown(selected.body || '*Nothing to preview yet.*') }} /> : <textarea className="dn-body" placeholder="Start writing…" value={selected.body} onChange={(event) => updateNote('body', event.target.value)} />}<LinkNoteInput notes={allNotes.filter(({ note }) => note.id !== selected.id)} onLink={(id, title) => updateNote('body', `${selected.body}\n[[id:${id}|${title}]]`)} /><div className="dn-collection-assign">{collections.length ? collections.map((collection) => <label key={collection.id}><input type="checkbox" checked={selected.collectionIds?.includes(collection.id) ?? false} onChange={(event) => { const ids = selected.collectionIds ?? []; updateSelected({ collectionIds: event.target.checked ? [...ids, collection.id] : ids.filter((id) => id !== collection.id) }) }} />{collection.name}</label>) : <button className="dn-collection-add" onClick={createCollection}>＋ Create a collection</button>}</div><TagInput key={selected.id} tags={selected.tags ?? []} onCommit={(tags) => updateNote('tags', tags)} />{backlinks.length > 0 && <div className="dn-backlinks"><strong>Linked from</strong>{backlinks.map(({ note, url }) => <button key={note.id} onClick={() => { setSelectedPageUrl(url); setSelectedId(note.id) }}>{note.title || 'Untitled note'}</button>)}</div>}<div className="dn-editor-footer"><span><i/>{saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Save failed · try editing again' : 'Saved locally'}</span></div></article> : null}
       </div>}
     </aside>

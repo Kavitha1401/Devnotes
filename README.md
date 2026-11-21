@@ -37,6 +37,8 @@ Markdown preview sanitizes generated HTML, removes images to prevent remote trac
 - Restore deleted notes from Trash, review recent note versions, and import or export a complete JSON backup.
 - Use the browser context menu or `Alt+Shift+S` to capture selected text, and `Alt+Shift+N` to start a note.
 - Copy fenced code blocks from Markdown preview.
+- Disable DevNotes per site, with default protection for common banking and email hosts. Re-enable a blocked site from the extension toolbar.
+- Configure theme, panel side and width, launcher position or visibility, default highlight color, Trash retention, and version-history depth in Settings.
 
 Keyboard shortcuts: `Alt+Shift+D` toggles the panel, `Alt+Shift+K` focuses search, `Alt+Shift+S` captures selected text, `Alt+Shift+N` creates a note, and `Esc` closes the open panel. Search also accepts `Ctrl/Cmd+K` while DevNotes is open. Chrome lets you change extension shortcuts at `chrome://extensions/shortcuts`.
 
