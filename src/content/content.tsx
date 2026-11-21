@@ -17,8 +17,8 @@ function mount() {
   }
   const host = document.createElement('div')
   host.id = 'devnotes-root'
-  // Reset inherited styles from the page
-  host.style.cssText = 'all: initial; position: fixed; z-index: 2147483647;'
+  // Page-level layer anchored to documentElement top-left; child overlays use page-space or viewport-fixed positioning
+  host.style.cssText = 'all: initial; position: absolute; top: 0; left: 0; width: 100%; height: 0; overflow: visible; z-index: 2147483647; pointer-events: none;'
   document.documentElement.appendChild(host)
 
   const shadow = host.attachShadow({ mode: 'closed' })
