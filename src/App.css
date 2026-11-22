@@ -169,8 +169,8 @@ button { cursor: pointer; }
 @media (max-width: 480px) { .dn-panel { width: 100vw; } .dn-launcher { right: 14px; bottom: 14px; } }
 @media (prefers-reduced-motion: reduce) { .dn-launcher, .dn-panel { transition: none; } }
 
-.dn-selection-toolbar { position: fixed; z-index: 2147483647; display: flex; align-items: center; gap: 4px; padding: 6px; border: 1px solid #d8d8ca; border-radius: 10px; background: #fffef8; color: #34392f; box-shadow: 0 6px 24px #171a1430; font: 11px/1 ui-sans-serif, system-ui; pointer-events: auto; }
-.dn-selection-toolbar button { min-width: 34px; border: 0; border-radius: 6px; padding: 7px 8px; color: inherit; background: transparent; font-size: 10px; }
+.dn-selection-toolbar { position: fixed; z-index: 2147483647; display: flex; align-items: center; gap: 4px; padding: 6px; border: 1px solid #d8d8ca; border-radius: 10px; background: #fffef8; color: #34392f; box-shadow: 0 6px 24px #171a1430; font: 11px/1 ui-sans-serif, system-ui; pointer-events: auto !important; }
+.dn-selection-toolbar button { min-width: 34px; border: 0; border-radius: 6px; padding: 7px 8px; color: inherit; background: transparent; font-size: 10px; pointer-events: auto !important; }
 .dn-selection-toolbar button:hover { background: #edf0e7; }
 .dn-selection-toolbar button.dn-toolbar-delete { color: #b33927; font-weight: 600; }
 .dn-selection-toolbar button.dn-toolbar-delete:hover { background: #fdf0ed; color: #8f2312; }

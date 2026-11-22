@@ -843,7 +843,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   useEffect(() => {
     const onHighlightClick = (event: MouseEvent) => {
       const target = event.target as HTMLElement | null
-      if (target?.closest('.dn-card') || target?.closest('.dn-selection-toolbar') || target?.closest('.dn-panel') || target?.closest('.dn-launcher')) {
+      if (target?.id === 'devnotes-root' || target?.closest('#devnotes-root')) {
         return
       }
       const mark = target?.closest<HTMLElement>('[data-devnotes-highlight]')
@@ -859,8 +859,8 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
         highlightIds: [id],
       })
     }
-    document.addEventListener('click', onHighlightClick)
-    return () => document.removeEventListener('click', onHighlightClick)
+    document.addEventListener('click', onHighlightClick, true)
+    return () => document.removeEventListener('click', onHighlightClick, true)
   }, [highlights])
 
   useEffect(() => {
@@ -1021,13 +1021,12 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       if (!rect.width && !rect.height) return
 
       const ids = new Set<string>()
-      const ancestor = range.commonAncestorContainer
-      const parent = ancestor instanceof HTMLElement ? ancestor : ancestor.parentElement
-      const direct = parent?.closest<HTMLElement>('[data-devnotes-highlight]')
-      if (direct?.dataset.devnotesHighlight) ids.add(direct.dataset.devnotesHighlight)
+      const startMark = range.startContainer.parentElement?.closest<HTMLElement>('[data-devnotes-highlight]')
+      if (startMark?.dataset.devnotesHighlight) ids.add(startMark.dataset.devnotesHighlight)
+      const endMark = range.endContainer.parentElement?.closest<HTMLElement>('[data-devnotes-highlight]')
+      if (endMark?.dataset.devnotesHighlight) ids.add(endMark.dataset.devnotesHighlight)
 
-      const container = parent ?? document.body
-      container.querySelectorAll<HTMLElement>('[data-devnotes-highlight]').forEach((m) => {
+      document.querySelectorAll<HTMLElement>('[data-devnotes-highlight]').forEach((m) => {
         try {
           if (range.intersectsNode(m) && m.dataset.devnotesHighlight) {
             ids.add(m.dataset.devnotesHighlight)
@@ -1046,17 +1045,30 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
 
     const onPointerDown = (event: MouseEvent) => {
       const target = event.target as HTMLElement | null
-      if (target?.closest('.dn-selection-toolbar') || target?.closest('[data-devnotes-highlight]')) {
+      if (
+        target?.id === 'devnotes-root' ||
+        target?.closest('#devnotes-root') ||
+        target?.closest('[data-devnotes-highlight]') ||
+        target?.closest('.dn-selection-toolbar')
+      ) {
         return
       }
       setSelectionToolbar(null)
     }
 
+    const onScroll = () => {
+      if (window.getSelection()?.isCollapsed) {
+        setSelectionToolbar(null)
+      }
+    }
+
     document.addEventListener('selectionchange', updateSelection)
     document.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('scroll', onScroll, { passive: true })
     return () => {
       document.removeEventListener('selectionchange', updateSelection)
       document.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('scroll', onScroll)
     }
   }, [])
 
@@ -1320,7 +1332,15 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
 
   const removeHighlight = (id: string) => {
     highlightsDirtyRef.current = true
-    document.querySelectorAll<HTMLElement>(`[data-devnotes-highlight="${CSS.escape(id)}"]`).forEach((mark) => mark.replaceWith(...Array.from(mark.childNodes)))
+    document.querySelectorAll<HTMLElement>(`[data-devnotes-highlight="${CSS.escape(id)}"]`).forEach((mark) => {
+      const parent = mark.parentNode
+      if (!parent) return
+      while (mark.firstChild) {
+        parent.insertBefore(mark.firstChild, mark)
+      }
+      mark.remove()
+      parent.normalize()
+    })
     const target = highlights.find((item) => item.id === id)
     if (target?.noteId) {
       const noteUrl = allNotes.find(({ note }) => note.id === target.noteId)?.url ?? pageUrl
@@ -1331,6 +1351,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     }
     setHighlights((items) => items.filter((item) => item.id !== id))
     setEditingId((current) => current === id ? null : current)
+    setAnnotationLayoutTick((t) => t + 1)
   }
 
   const exportMarkdown = () => {
@@ -1613,22 +1634,38 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       <div
         className="dn-selection-toolbar"
         style={{ left: selectionToolbar.x, top: selectionToolbar.y }}
-        onMouseDown={(event) => event.preventDefault()}
+        onPointerDown={(event) => event.stopPropagation()}
+        onMouseDown={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+        }}
+        onClick={(event) => event.stopPropagation()}
         aria-label="Text annotation tools"
       >
         {HIGHLIGHT_COLORS.map((color) => (
           <button
             key={color}
+            type="button"
             className="dn-toolbar-color"
             aria-label={`Highlight with ${color}`}
             title={`Highlight with ${color}`}
             style={{ background: color }}
-            onClick={() => {
+            onPointerDown={(event) => event.stopPropagation()}
+            onMouseDown={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+            }}
+            onClick={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
               const activeId = selectionToolbar.highlightIds?.[0]
-              if (activeId && (!window.getSelection()?.toString().trim() || selectionToolbar.highlightIds?.length === 1)) {
+              const selection = window.getSelection()
+              const hasSelection = Boolean(selection && !selection.isCollapsed && selection.toString().trim())
+              if (activeId && !hasSelection) {
                 changeHighlightColor(activeId, color)
               } else {
                 captureSelection('highlight', color)
+                selection?.removeAllRanges()
               }
               setSelectionToolbar(null)
             }}
@@ -1636,12 +1673,23 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
         ))}
         <span className="dn-toolbar-divider" />
         <button
-          onClick={() => {
+          type="button"
+          onPointerDown={(event) => event.stopPropagation()}
+          onMouseDown={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+          }}
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
             const activeId = selectionToolbar.highlightIds?.[0]
-            if (activeId && !window.getSelection()?.toString().trim()) {
+            const selection = window.getSelection()
+            const hasSelection = Boolean(selection && !selection.isCollapsed && selection.toString().trim())
+            if (activeId && !hasSelection) {
               setEditing(activeId, true)
             } else {
               captureSelection('note')
+              selection?.removeAllRanges()
             }
             setSelectionToolbar(null)
           }}
@@ -1649,13 +1697,24 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
           Note
         </button>
         <button
-          onClick={() => {
+          type="button"
+          onPointerDown={(event) => event.stopPropagation()}
+          onMouseDown={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+          }}
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
             const activeId = selectionToolbar.highlightIds?.[0]
-            if (activeId && !window.getSelection()?.toString().trim()) {
+            const selection = window.getSelection()
+            const hasSelection = Boolean(selection && !selection.isCollapsed && selection.toString().trim())
+            if (activeId && !hasSelection) {
               setHighlights((items) => items.map((h) => h.id === activeId ? { ...h, display: h.display === 'sticky' ? 'inline' : 'sticky' } : h))
               highlightsDirtyRef.current = true
             } else {
               captureSelection('sticky')
+              selection?.removeAllRanges()
             }
             setSelectionToolbar(null)
           }}
@@ -1666,10 +1725,20 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
           <>
             <span className="dn-toolbar-divider" />
             <button
+              type="button"
               className="dn-toolbar-delete"
               title="Unhighlight text"
-              onClick={() => {
-                selectionToolbar.highlightIds?.forEach((id) => removeHighlight(id))
+              onPointerDown={(event) => event.stopPropagation()}
+              onMouseDown={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+              }}
+              onClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                const ids = selectionToolbar.highlightIds ?? []
+                ids.forEach((id) => removeHighlight(id))
+                window.getSelection()?.removeAllRanges()
                 setSelectionToolbar(null)
               }}
             >
