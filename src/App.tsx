@@ -9,7 +9,7 @@ type Revision = { id: string; title: string; body: string; savedAt: number }
 type PageNotes = Record<string, Note[]>
 type Collection = { id: string; name: string; createdAt: number }
 type NotePlacement = { side: 'left' | 'right' | 'inline'; dx: number; dy: number }
-type Highlight = { id: string; noteId?: string; text: string; prefix: string; suffix: string; color: string; createdAt: number; shape?: 'marker' | 'underline' | 'box' | 'bracket'; display?: 'inline' | 'sticky'; placement?: NotePlacement; status?: 'attached' | 'orphan'; stickyX?: number; stickyY?: number }
+type Highlight = { id: string; noteId?: string; text: string; prefix: string; suffix: string; color: string; createdAt: number; shape?: 'marker' | 'underline' | 'box' | 'bracket' | 'none'; display?: 'inline' | 'sticky'; placement?: NotePlacement; status?: 'attached' | 'orphan'; stickyX?: number; stickyY?: number }
 type PageTask = { id: string; text: string; done: boolean }
 type PageMeta = { status: 'to-read' | 'reading' | 'done'; whySaved: string; tasks: PageTask[]; journalEntry: string; updatedAt: number }
 type AnnotationPlacement = { item: Highlight; index: number; side: 'left' | 'right' | 'marker'; x: number; y: number; anchorX: number; anchorY: number; rect: { left: number; top: number; right: number; bottom: number; width: number; height: number }; note?: Note }
@@ -364,6 +364,7 @@ function pageTextOffset(nodes: Text[], container: Node, offset: number): number 
 }
 
 function highlightStyle(shape: Highlight['shape'], color: string) {
+  if (shape === 'none' || color === 'transparent') return 'background:transparent; color:inherit;'
   if (shape === 'underline') return `background:transparent; color:inherit; text-decoration:underline wavy ${color}; text-decoration-thickness:2px; text-underline-offset:3px;`
   if (shape === 'box') return `background:transparent; color:inherit; outline:1px solid ${color}; outline-offset:1px; border-radius:3px;`
   if (shape === 'bracket') return `background:transparent; color:inherit; border-left:2px solid ${color}; border-right:2px solid ${color}; padding:0 2px;`
@@ -492,7 +493,7 @@ function findNearestTextAnchor(clientX: number, clientY: number): { text: string
 const LEGACY_LINE = /^\s*(>|Source:\s*\[|—\s*\[|Related link:)/
 
 function cleanNoteBody(body: string) {
-  return body.split('\n').filter((line) => !LEGACY_LINE.test(line)).join('\n').replace(/\n{3,}/g, '\n\n').trim()
+  return body.split('\n').filter((line) => !LEGACY_LINE.test(line)).join('\n').replace(/\n{3,}/g, '\n\n')
 }
 
 const CARD_TASK_LINE = /^\s*[-*+]\s+\[([ xX])\]\s*(.*)$/
@@ -509,17 +510,29 @@ function CardBody({ body, editing, onChange, onEditingChange, onToggleTask }: {
   onToggleTask: (taskIndex: number, done: boolean) => void
 }) {
   const ref = useRef<HTMLTextAreaElement>(null)
-  const reading = !editing && body.trim().length > 0
+  const [draft, setDraft] = useState(body)
+  const [lastPropBody, setLastPropBody] = useState(body)
+
+  if (!editing && body !== lastPropBody) {
+    setLastPropBody(body)
+    setDraft(body)
+  }
+
+  const reading = !editing && draft.trim().length > 0
+
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
     el.style.height = '0px'
     el.style.height = `${el.scrollHeight}px`
-  }, [body, reading])
-  useEffect(() => { if (editing) ref.current?.focus() }, [editing, reading])
+  }, [draft, reading])
+
+  useEffect(() => {
+    if (editing) ref.current?.focus()
+  }, [editing])
 
   if (reading) {
-    const lines = body.split('\n')
+    const lines = draft.split('\n')
     return <div className="dn-card-read" onClick={() => onEditingChange(true)}>
       {lines.map((line, index) => {
         const task = line.match(CARD_TASK_LINE)
@@ -539,14 +552,24 @@ function CardBody({ body, editing, onChange, onEditingChange, onToggleTask }: {
   return <textarea
     ref={ref}
     className="dn-card-input"
-    value={body}
+    value={draft}
     rows={1}
     placeholder="Write a note…"
     aria-label="Annotation note"
-    onChange={(event) => onChange(event.target.value)}
+    onChange={(event) => {
+      const val = event.target.value
+      setDraft(val)
+      onChange(val)
+    }}
     onFocus={() => onEditingChange(true)}
-    onBlur={() => onEditingChange(false)}
-    onKeyDown={(event) => { event.stopPropagation(); if (event.key === 'Escape') event.currentTarget.blur() }}
+    onBlur={() => {
+      onEditingChange(false)
+      onChange(draft)
+    }}
+    onKeyDown={(event) => {
+      event.stopPropagation()
+      if (event.key === 'Escape') event.currentTarget.blur()
+    }}
     onKeyUp={(event) => event.stopPropagation()}
     onKeyPress={(event) => event.stopPropagation()}
   />
@@ -570,23 +593,51 @@ function AnnotationCard({ item, variant, x, y, body, editing, penSet, noteFont, 
   onMove?: (pageX: number, pageY: number) => void
 }) {
   const dragOffset = useRef<{ x: number; y: number } | null>(null)
-  const tilt = variant === 'sticky' && !editing ? ((item.id.charCodeAt(0) + item.id.charCodeAt(1)) % 5 - 2) * 0.4 : 0
-  const style = { left: x, top: y, '--accent': item.color, transform: tilt ? `rotate(${tilt}deg)` : undefined } as CSSProperties
-  return <section className={`dn-card dn-card-${variant} dn-pen-${penSet} dn-font-${noteFont}`} style={style} aria-label={variant === 'sticky' ? 'Sticky note' : 'Margin note'}>
-    {variant === 'sticky' && <>
-      <div
-        className="dn-card-grip"
-        role="presentation"
-        onPointerDown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); dragOffset.current = { x: event.pageX - x, y: event.pageY - y } }}
-        onPointerMove={(event) => { if (dragOffset.current) onMove?.(Math.max(8, event.pageX - dragOffset.current.x), Math.max(8, event.pageY - dragOffset.current.y)) }}
-        onPointerUp={() => { dragOffset.current = null }}
-        onPointerCancel={() => { dragOffset.current = null }}
-      />
-      <div className="dn-sticky-tape" aria-hidden="true" />
-    </>}
+  const isSticky = variant === 'sticky'
+  const tilt = isSticky && !editing ? ((item.id.charCodeAt(0) + item.id.charCodeAt(1)) % 5 - 2) * 0.7 : 0
+  const style = {
+    left: x,
+    top: y,
+    '--accent': item.color === 'transparent' ? '#5c7049' : item.color,
+    transform: tilt ? `rotate(${tilt}deg)` : undefined
+  } as CSSProperties
+
+  return <section
+    className={`dn-card dn-card-${variant} dn-pen-${penSet} dn-font-${noteFont}`}
+    style={style}
+    aria-label={isSticky ? 'Sticky note' : 'Margin note'}
+  >
+    {isSticky ? (
+      <>
+        <div
+          className="dn-card-grip"
+          role="presentation"
+          title="Drag sticky note"
+          onPointerDown={(event) => {
+            event.preventDefault()
+            event.currentTarget.setPointerCapture(event.pointerId)
+            dragOffset.current = { x: event.pageX - x, y: event.pageY - y }
+          }}
+          onPointerMove={(event) => {
+            if (dragOffset.current) onMove?.(Math.max(8, event.pageX - dragOffset.current.x), Math.max(8, event.pageY - dragOffset.current.y))
+          }}
+          onPointerUp={() => { dragOffset.current = null }}
+          onPointerCancel={() => { dragOffset.current = null }}
+        >
+          <span className="dn-card-grip-label">STICKY NOTE · DRAG</span>
+        </div>
+        <div className="dn-sticky-tape" aria-hidden="true" />
+      </>
+    ) : (
+      <div className="dn-card-margin-header">
+        <span className="dn-card-badge">NOTE</span>
+      </div>
+    )}
     <CardBody body={body} editing={editing} onChange={onChange} onEditingChange={onEditingChange} onToggleTask={onToggleTask} />
     <div className="dn-card-actions">
-      <button type="button" aria-label="Change colour" title="Change colour" onMouseDown={(event) => event.preventDefault()} onClick={onColor}><i style={{ background: item.color }} /></button>
+      <button type="button" aria-label="Change colour" title="Change colour" onMouseDown={(event) => event.preventDefault()} onClick={onColor}>
+        <i style={{ background: item.color === 'transparent' ? '#5c7049' : item.color }} />
+      </button>
       <button type="button" onClick={() => onEditingChange(true)}>Edit</button>
       <button type="button" onClick={onOpen}>Open</button>
       <button type="button" aria-label="Delete annotation" title="Delete annotation" onClick={onRemove}>Delete</button>
@@ -795,21 +846,52 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     let active = true
     let observer: MutationObserver | null = null
     let restoreTimer = 0
+    let isApplying = false
+
+    const runApplyHighlights = (items: Highlight[]) => {
+      if (isApplying || !active) return
+      isApplying = true
+      observer?.disconnect()
+      try {
+        setOrphanedHighlights(applyHighlights(items))
+      } finally {
+        isApplying = false
+        if (active && document.body) {
+          observer?.observe(document.body, { childList: true, subtree: true })
+        }
+      }
+    }
+
     clearPageHighlights()
     void readHighlights().then((saved) => {
       if (!active) return
       const pageHighlights = saved[pageUrl] ?? []
       setHighlights(pageHighlights)
-      setOrphanedHighlights(applyHighlights(pageHighlights))
+      runApplyHighlights(pageHighlights)
       setHighlightsForUrl(pageUrl)
       observer = new MutationObserver((mutations) => {
-        const isDevNotesMark = (node: Node) => node instanceof HTMLElement && node.hasAttribute('data-devnotes-highlight')
-        const pageChanged = mutations.some((mutation) => !Array.from(mutation.addedNodes).some(isDevNotesMark) && !Array.from(mutation.removedNodes).some(isDevNotesMark))
-        if (!pageChanged) return
+        if (isApplying) return
+        const isDevNotesNode = (node: Node) => {
+          if (node instanceof HTMLElement) {
+            return node.hasAttribute('data-devnotes-highlight') || node.id === 'devnotes-root' || Boolean(node.closest?.('#devnotes-root'))
+          }
+          return false
+        }
+        const hasExternalChanges = mutations.some((m) =>
+          Array.from(m.addedNodes).some((n) => !isDevNotesNode(n)) ||
+          Array.from(m.removedNodes).some((n) => !isDevNotesNode(n))
+        )
+        const marksCount = document.querySelectorAll('[data-devnotes-highlight]').length
+        const expectedCount = highlightsRef.current.filter((h) => h.text).length
+        if (marksCount === expectedCount) return
+        if (!hasExternalChanges) return
+
         window.clearTimeout(restoreTimer)
-        restoreTimer = window.setTimeout(() => setOrphanedHighlights(applyHighlights(highlightsRef.current)), 200)
+        restoreTimer = window.setTimeout(() => runApplyHighlights(highlightsRef.current), 300)
       })
-      observer.observe(document.body, { childList: true, subtree: true })
+      if (document.body) {
+        observer.observe(document.body, { childList: true, subtree: true })
+      }
     })
     return () => { active = false; observer?.disconnect(); window.clearTimeout(restoreTimer) }
   }, [pageUrl])
@@ -1451,8 +1533,8 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       }
     }
 
-    // Step 3: Anchor free placement too if sticky dropped on empty space
-    if (!text && action === 'sticky') {
+    // Anchor free placement too if sticky or note requested without text selection
+    if (!text && (action === 'sticky' || action === 'note')) {
       const anchor = findNearestTextAnchor(window.innerWidth / 2, window.innerHeight / 3)
       if (anchor) {
         text = anchor.text
@@ -1470,9 +1552,9 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       text,
       prefix,
       suffix,
-      color,
+      color: action === 'note' ? 'transparent' : color,
       createdAt: Date.now(),
-      shape: settings.highlightStyle,
+      shape: action === 'note' ? 'none' : settings.highlightStyle,
       display: action === 'sticky' ? 'sticky' : 'inline',
       placement: { side: 'right', dx: 24, dy: 0 },
       status: 'attached',
@@ -1820,18 +1902,22 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
 
     {/* Fixed rail minimap */}
     <div className="dn-annotation-rail" aria-label="Page annotations">
-      {annotationPlacements.map(({ item, rect }) => (
-        <button
-          key={item.id}
-          style={{
-            top: Math.max(4, Math.min(window.innerHeight - 14, rect.top - (window.pageYOffset ?? window.scrollY ?? 0) + rect.height / 2)),
-            background: item.color,
-          }}
-          title={item.text ? `Jump to: “${item.text.slice(0, 35)}${item.text.length > 35 ? '…' : ''}”` : 'Jump to highlight'}
-          aria-label="Jump to highlight"
-          onClick={() => document.querySelector<HTMLElement>(`[data-devnotes-highlight="${CSS.escape(item.id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
-        />
-      ))}
+      {annotationPlacements.map(({ item, rect }) => {
+        const docHeight = Math.max(1, document.documentElement.scrollHeight, document.body?.scrollHeight ?? 1)
+        const pct = Math.max(1, Math.min(99, (rect.top / docHeight) * 100))
+        return (
+          <button
+            key={item.id}
+            style={{
+              top: `${pct}%`,
+              background: item.color === 'transparent' ? '#5c7049' : item.color,
+            }}
+            title={item.text ? `Jump to: “${item.text.slice(0, 35)}${item.text.length > 35 ? '…' : ''}”` : 'Jump to highlight'}
+            aria-label="Jump to highlight"
+            onClick={() => document.querySelector<HTMLElement>(`[data-devnotes-highlight="${CSS.escape(item.id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+          />
+        )
+      })}
     </div>
 
     {!open && !settings.hideLauncher && <button className={`dn-launcher ${settings.launcherPosition === 'bottom-left' ? 'dn-launcher-left' : ''}`} onClick={() => setOpen(true)} aria-label="Open DevNotes" title="DevNotes"><span className="dn-mark">d<span>.</span></span></button>}

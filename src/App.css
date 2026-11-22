@@ -178,9 +178,9 @@ button { cursor: pointer; }
 .dn-toolbar-divider { height: 18px; border-left: 1px solid #dedfd5; margin: 0 2px; }
 .dn-page-layer { position: absolute; top: 0; left: 0; width: 100%; height: 0; overflow: visible; pointer-events: none; z-index: 2147483645; }
 .dn-sticky-tape { position: absolute; top: -8px; left: 50%; transform: translateX(-50%); width: 48px; height: 16px; background: rgba(255,250,180,0.75); border: 1px solid rgba(210,196,120,0.4); border-radius: 2px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
-.dn-annotation-rail { position: fixed; right: 0; top: 12vh; z-index: 2147483645; display: flex; flex-direction: column; gap: 3px; max-height: 76vh; pointer-events: none; }
-.dn-annotation-rail button { position: fixed; right: 4px; width: 12px; height: 12px; padding: 0; border: 1.5px solid #fff; border-radius: 50%; box-shadow: 0 1px 4px #14181144; pointer-events: auto !important; transition: transform .12s ease; }
-.dn-annotation-rail button:hover { transform: scale(1.35); }
+.dn-annotation-rail { position: fixed; right: 0; top: 0; height: 100vh; width: 14px; z-index: 2147483645; pointer-events: none; }
+.dn-annotation-rail button { position: absolute; right: 3px; width: 8px; height: 8px; padding: 0; border: 1px solid #fff; border-radius: 50%; box-shadow: 0 1px 3px rgba(0,0,0,0.25); pointer-events: auto !important; transition: transform .15s ease; }
+.dn-annotation-rail button:hover { transform: scale(1.6); }
 .dn-annotation-connectors { position: absolute; top: 0; left: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 2147483644; }
 .dn-annotation-connectors path { fill: none; stroke: #b9b49f; stroke-width: 1.2; stroke-dasharray: 3 3; opacity: .75; }
 .dn-annotation-connectors circle { fill: #b9b49f; opacity: .85; }
@@ -238,8 +238,21 @@ button { cursor: pointer; }
 @media (max-width: 900px) { .dn-margin-card, .dn-annotation-connectors { display: none; } }
 
 /* Annotation cards (margin notes and stickies) */
-.dn-card { position: absolute; z-index: 2147483645; box-sizing: border-box; width: 230px; padding: 11px 13px 12px; border: 1px solid color-mix(in srgb, var(--accent, #f6e58d) 55%, #d9d3bd); border-radius: 10px; color: #3a3d33; background: color-mix(in srgb, var(--accent, #f6e58d) 16%, #fffdf7); box-shadow: 0 1px 2px #1d1f1a14, 0 8px 22px #1d1f1a18; font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; text-align: left; pointer-events: auto !important; }
+.dn-card { position: absolute; z-index: 2147483645; box-sizing: border-box; width: 230px; padding: 11px 13px 12px; font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; text-align: left; pointer-events: auto !important; }
 .dn-card:focus-within { outline: 2px solid #5c7049; outline-offset: 2px; }
+
+/* 1. Margin Note: Crisp white book-marginalia card with color-coded left accent bar */
+.dn-card-margin { background: #ffffff; border: 1px solid #e1e3da; border-left: 4px solid var(--accent, #5c7049); border-radius: 6px; color: #32352b; box-shadow: 0 2px 10px rgba(20, 24, 17, 0.08), 0 1px 3px rgba(20, 24, 17, 0.05); }
+.dn-card-margin-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; }
+.dn-card-badge { font: 700 8px/1 ui-sans-serif, system-ui, sans-serif; letter-spacing: 0.8px; color: #7c8869; text-transform: uppercase; }
+
+/* 2. Sticky Note: Authentic warm canary-yellow Post-It note with washi tape and grip header */
+.dn-card-sticky { width: 250px; padding: 22px 13px 13px; background: color-mix(in srgb, var(--accent, #fef08a) 38%, #fffce3); border: 1px solid #ddd28c; border-radius: 2px 2px 12px 2px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 12px 24px -2px rgba(45, 38, 18, 0.16); color: #383424; }
+.dn-card-grip { position: absolute; top: 0; left: 0; right: 0; height: 19px; display: flex; align-items: center; justify-content: center; cursor: grab; touch-action: none; background: rgba(0, 0, 0, 0.035); border-bottom: 1px solid rgba(215, 195, 110, 0.35); }
+.dn-card-grip:active { cursor: grabbing; }
+.dn-card-grip-label { font: 700 7px/1 ui-sans-serif, system-ui, sans-serif; letter-spacing: 0.9px; color: #8a7a40; user-select: none; }
+.dn-sticky-tape { position: absolute; top: -9px; left: 50%; transform: translateX(-50%); width: 52px; height: 17px; background: rgba(255, 252, 215, 0.88); border: 1px dashed rgba(200, 185, 120, 0.55); border-radius: 2px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08); pointer-events: none; }
+
 .dn-card-input { display: block; width: 100%; min-height: 20px; margin: 0; padding: 0; border: 0; outline: 0; resize: none; overflow: hidden; color: inherit; background: transparent; font: inherit; }
 .dn-card-input::placeholder { color: #8a8d7e; }
 .dn-card-read { cursor: text; }
@@ -254,10 +267,6 @@ button { cursor: pointer; }
 .dn-card-actions button { display: grid; place-items: center; min-width: 22px; height: 22px; padding: 0 7px; border: 0; border-radius: 6px; color: #f4f5eb; background: transparent; font: 600 11px/1 ui-sans-serif, system-ui, sans-serif; cursor: pointer; }
 .dn-card-actions button:hover { background: #3b443a; }
 .dn-card-actions i { display: block; width: 12px; height: 12px; border: 1px solid #f4f5eb88; border-radius: 50%; }
-.dn-card-sticky { width: 260px; padding-top: 18px; border-color: #d7c98e; border-radius: 3px 3px 10px 10px; background: color-mix(in srgb, var(--accent, #f6e58d) 38%, #fffbe8); box-shadow: 0 10px 24px #3b341a2e; }
-.dn-card-grip { position: absolute; inset: 0 0 auto 0; height: 16px; cursor: grab; touch-action: none; }
-.dn-card-grip:active { cursor: grabbing; }
-.dn-sticky-tape { pointer-events: none; }
 .dn-card.dn-pen-pencil { border-style: dashed; }
 .dn-card.dn-pen-fountain { font-style: italic; }
 .dn-card.dn-font-serif { font-family: Georgia, "Times New Roman", serif; }
