@@ -172,12 +172,15 @@ button { cursor: pointer; }
 .dn-selection-toolbar { position: fixed; z-index: 2147483647; display: flex; align-items: center; gap: 4px; padding: 6px; border: 1px solid #d8d8ca; border-radius: 10px; background: #fffef8; color: #34392f; box-shadow: 0 6px 24px #171a1430; font: 11px/1 ui-sans-serif, system-ui; pointer-events: auto; }
 .dn-selection-toolbar button { min-width: 34px; border: 0; border-radius: 6px; padding: 7px 8px; color: inherit; background: transparent; font-size: 10px; }
 .dn-selection-toolbar button:hover { background: #edf0e7; }
+.dn-selection-toolbar button.dn-toolbar-delete { color: #b33927; font-weight: 600; }
+.dn-selection-toolbar button.dn-toolbar-delete:hover { background: #fdf0ed; color: #8f2312; }
 .dn-selection-toolbar .dn-toolbar-color { min-width: 17px; width: 17px; height: 17px; padding: 0; border: 1px solid #67705b66; border-radius: 50%; }
 .dn-toolbar-divider { height: 18px; border-left: 1px solid #dedfd5; margin: 0 2px; }
 .dn-page-layer { position: absolute; top: 0; left: 0; width: 100%; height: 0; overflow: visible; pointer-events: none; z-index: 2147483645; }
 .dn-sticky-tape { position: absolute; top: -8px; left: 50%; transform: translateX(-50%); width: 48px; height: 16px; background: rgba(255,250,180,0.75); border: 1px solid rgba(210,196,120,0.4); border-radius: 2px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
 .dn-annotation-rail { position: fixed; right: 0; top: 12vh; z-index: 2147483645; display: flex; flex-direction: column; gap: 3px; max-height: 76vh; pointer-events: none; }
-.dn-annotation-rail button { position: fixed; right: 3px; width: 19px; height: 19px; padding: 0; border: 1px solid #fff; border-radius: 50%; color: #fff; background: #58694b; box-shadow: 0 1px 5px #14181155; font: 700 9px/1 ui-sans-serif, system-ui; pointer-events: auto !important; }
+.dn-annotation-rail button { position: fixed; right: 4px; width: 12px; height: 12px; padding: 0; border: 1.5px solid #fff; border-radius: 50%; box-shadow: 0 1px 4px #14181144; pointer-events: auto !important; transition: transform .12s ease; }
+.dn-annotation-rail button:hover { transform: scale(1.35); }
 .dn-annotation-connectors { position: absolute; top: 0; left: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 2147483644; }
 .dn-annotation-connectors path { fill: none; stroke: #b9b49f; stroke-width: 1.2; stroke-dasharray: 3 3; opacity: .75; }
 .dn-annotation-connectors circle { fill: #b9b49f; opacity: .85; }

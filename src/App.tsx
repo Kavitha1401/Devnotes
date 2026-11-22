@@ -370,7 +370,7 @@ function highlightStyle(shape: Highlight['shape'], color: string) {
   return `background:${color}; color:inherit; border-radius:2px; padding:0 1px;`
 }
 
-function wrapTextOffsets(nodes: Text[], start: number, end: number, id: string, color: string, shape: Highlight['shape'] = 'marker', number?: number) {
+function wrapTextOffsets(nodes: Text[], start: number, end: number, id: string, color: string, shape: Highlight['shape'] = 'marker') {
   let offset = 0
   for (const node of nodes) {
     const text = node.textContent ?? ''
@@ -382,7 +382,6 @@ function wrapTextOffsets(nodes: Text[], start: number, end: number, id: string, 
       range.setEnd(node, to)
       const mark = document.createElement('mark')
       mark.dataset.devnotesHighlight = id
-      if (number) mark.dataset.devnotesNumber = String(number)
       mark.style.cssText = `${highlightStyle(shape, color)} color:inherit;`
       try { range.surroundContents(mark) } catch { /* Leave text visible if a site mutates the selected node mid-restore. */ }
     }
@@ -395,7 +394,7 @@ function applyHighlights(highlights: Highlight[]): string[] {
   if (!document.body) return []
   clearPageHighlights()
   const orphaned: string[] = []
-  for (const [itemIndex, item] of highlights.entries()) {
+  for (const item of highlights) {
     if (!item.text) continue
     const nodes = pageTextNodes()
     const text = nodes.map((node) => node.textContent ?? '').join('')
@@ -406,7 +405,7 @@ function applyHighlights(highlights: Highlight[]): string[] {
       if ((!item.prefix || before.endsWith(item.prefix)) && (!item.suffix || after.startsWith(item.suffix))) break
       index = text.indexOf(item.text, index + 1)
     }
-    if (index >= 0) wrapTextOffsets(nodes, index, index + item.text.length, item.id, item.color, item.shape, itemIndex + 1)
+    if (index >= 0) wrapTextOffsets(nodes, index, index + item.text.length, item.id, item.color, item.shape)
     else orphaned.push(item.id)
   }
   return orphaned
@@ -668,7 +667,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   const [trash, setTrash] = useState<TrashEntry[]>([])
   const [allPageMeta, setAllPageMeta] = useState<Record<string, PageMeta>>({})
   const [highlights, setHighlights] = useState<Highlight[]>([])
-  const [selectionToolbar, setSelectionToolbar] = useState<{ x: number; y: number } | null>(null)
+  const [selectionToolbar, setSelectionToolbar] = useState<{ x: number; y: number; highlightIds?: string[] } | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [annotationLayoutTick, setAnnotationLayoutTick] = useState(0)
   const [orphanedHighlights, setOrphanedHighlights] = useState<string[]>([])
@@ -843,19 +842,26 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
 
   useEffect(() => {
     const onHighlightClick = (event: MouseEvent) => {
-      const mark = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-devnotes-highlight]')
-      const id = mark?.dataset.devnotesHighlight
-      const noteId = highlights.find((item) => item.id === id)?.noteId
-      if (!noteId) return
-      setShowAllNotes(false)
-      setShowArchived(false)
-      setSelectedPageUrl(pageUrl)
-      setSelectedId(noteId)
-      setOpen(true)
+      const target = event.target as HTMLElement | null
+      if (target?.closest('.dn-card') || target?.closest('.dn-selection-toolbar') || target?.closest('.dn-panel') || target?.closest('.dn-launcher')) {
+        return
+      }
+      const mark = target?.closest<HTMLElement>('[data-devnotes-highlight]')
+      if (!mark) return
+      const id = mark.dataset.devnotesHighlight
+      if (!id) return
+      event.preventDefault()
+      event.stopPropagation()
+      const rect = mark.getBoundingClientRect()
+      setSelectionToolbar({
+        x: Math.max(8, Math.min(window.innerWidth - 260, rect.left + rect.width / 2 - 120)),
+        y: Math.max(8, rect.top - 54),
+        highlightIds: [id],
+      })
     }
     document.addEventListener('click', onHighlightClick)
     return () => document.removeEventListener('click', onHighlightClick)
-  }, [highlights, pageUrl])
+  }, [highlights])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1007,13 +1013,51 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   useEffect(() => {
     const updateSelection = () => {
       const selection = window.getSelection()
-      if (!selection || selection.isCollapsed || !selection.toString().trim() || !selection.rangeCount) { setSelectionToolbar(null); return }
-      const rect = selection.getRangeAt(0).getBoundingClientRect()
-      if (!rect.width && !rect.height) { setSelectionToolbar(null); return }
-      setSelectionToolbar({ x: Math.max(8, Math.min(window.innerWidth - 250, rect.left + rect.width / 2 - 120)), y: Math.max(8, rect.top - 54) })
+      if (!selection || selection.isCollapsed || !selection.toString().trim() || !selection.rangeCount) {
+        return
+      }
+      const range = selection.getRangeAt(0)
+      const rect = range.getBoundingClientRect()
+      if (!rect.width && !rect.height) return
+
+      const ids = new Set<string>()
+      const ancestor = range.commonAncestorContainer
+      const parent = ancestor instanceof HTMLElement ? ancestor : ancestor.parentElement
+      const direct = parent?.closest<HTMLElement>('[data-devnotes-highlight]')
+      if (direct?.dataset.devnotesHighlight) ids.add(direct.dataset.devnotesHighlight)
+
+      const container = parent ?? document.body
+      container.querySelectorAll<HTMLElement>('[data-devnotes-highlight]').forEach((m) => {
+        try {
+          if (range.intersectsNode(m) && m.dataset.devnotesHighlight) {
+            ids.add(m.dataset.devnotesHighlight)
+          }
+        } catch {
+          // ignore
+        }
+      })
+
+      setSelectionToolbar({
+        x: Math.max(8, Math.min(window.innerWidth - 260, rect.left + rect.width / 2 - 120)),
+        y: Math.max(8, rect.top - 54),
+        highlightIds: ids.size ? Array.from(ids) : undefined,
+      })
     }
+
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target?.closest('.dn-selection-toolbar') || target?.closest('[data-devnotes-highlight]')) {
+        return
+      }
+      setSelectionToolbar(null)
+    }
+
     document.addEventListener('selectionchange', updateSelection)
-    return () => document.removeEventListener('selectionchange', updateSelection)
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => {
+      document.removeEventListener('selectionchange', updateSelection)
+      document.removeEventListener('pointerdown', onPointerDown)
+    }
   }, [])
 
   useEffect(() => {
@@ -1057,7 +1101,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     let style = document.getElementById('devnotes-annotation-page-style') as HTMLStyleElement | null
     const owned = !style
     if (!style) { style = document.createElement('style'); style.id = 'devnotes-annotation-page-style'; document.documentElement.appendChild(style) }
-    style.textContent = `mark[data-devnotes-highlight]::after{content:attr(data-devnotes-number);display:inline-grid;place-items:center;vertical-align:super;margin-left:2px;min-width:12px;height:12px;border-radius:50%;background:#344334;color:white;font:700 8px/1 ui-sans-serif,system-ui;opacity:.9} mark[data-devnotes-highlight]{cursor:pointer} @media(max-width:900px){mark[data-devnotes-highlight]::after{min-width:15px;height:15px;font-size:9px}}`
+    style.textContent = `mark[data-devnotes-highlight]{cursor:pointer; transition:filter .12s;} mark[data-devnotes-highlight]:hover{filter:brightness(0.92);}`
     return () => { clearPageHighlights(); if (owned) style?.remove() }
   }, [])
 
@@ -1266,7 +1310,8 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     })
 
     clearPageHighlights()
-    wrapTextOffsets(nodes, start, end, highlightId, updated.find((h) => h.id === highlightId)?.color ?? '#f6e58d')
+    const found = updated.find((h) => h.id === highlightId)
+    wrapTextOffsets(nodes, start, end, highlightId, found?.color ?? '#f6e58d', found?.shape)
     highlightsDirtyRef.current = true
     setHighlights(updated)
     setOrphanedHighlights((prev) => prev.filter((id) => id !== highlightId))
@@ -1276,7 +1321,16 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   const removeHighlight = (id: string) => {
     highlightsDirtyRef.current = true
     document.querySelectorAll<HTMLElement>(`[data-devnotes-highlight="${CSS.escape(id)}"]`).forEach((mark) => mark.replaceWith(...Array.from(mark.childNodes)))
+    const target = highlights.find((item) => item.id === id)
+    if (target?.noteId) {
+      const noteUrl = allNotes.find(({ note }) => note.id === target.noteId)?.url ?? pageUrl
+      persist({
+        ...pages,
+        [noteUrl]: (pages[noteUrl] ?? []).filter((note) => note.id !== target.noteId),
+      })
+    }
     setHighlights((items) => items.filter((item) => item.id !== id))
+    setEditingId((current) => current === id ? null : current)
   }
 
   const exportMarkdown = () => {
@@ -1403,7 +1457,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       status: 'attached',
     }
 
-    wrapTextOffsets(nodes, start, end, item.id, item.color, item.shape, highlights.length + 1)
+    wrapTextOffsets(nodes, start, end, item.id, item.color, item.shape)
     highlightsDirtyRef.current = true
     setOrphanedHighlights((items) => items.filter((id) => id !== item.id))
     setHighlights([...highlights, item])
@@ -1555,7 +1609,76 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   }, [allNotes, annotationLayoutTick, editingId, highlights])
 
   return <>
-    {selectionToolbar && <div className="dn-selection-toolbar" style={{ left: selectionToolbar.x, top: selectionToolbar.y }} onMouseDown={(event) => event.preventDefault()} aria-label="Text annotation tools">{HIGHLIGHT_COLORS.map((color) => <button key={color} className="dn-toolbar-color" aria-label={`Highlight with ${color}`} title={`Highlight with ${color}`} style={{ background: color }} onClick={() => { captureSelection('highlight', color); setSelectionToolbar(null) }} />)}<span className="dn-toolbar-divider" /><button onClick={() => { captureSelection('note'); setSelectionToolbar(null) }}>Note</button><button onClick={() => { captureSelection('sticky'); setSelectionToolbar(null) }}>Sticky</button></div>}
+    {selectionToolbar && (
+      <div
+        className="dn-selection-toolbar"
+        style={{ left: selectionToolbar.x, top: selectionToolbar.y }}
+        onMouseDown={(event) => event.preventDefault()}
+        aria-label="Text annotation tools"
+      >
+        {HIGHLIGHT_COLORS.map((color) => (
+          <button
+            key={color}
+            className="dn-toolbar-color"
+            aria-label={`Highlight with ${color}`}
+            title={`Highlight with ${color}`}
+            style={{ background: color }}
+            onClick={() => {
+              const activeId = selectionToolbar.highlightIds?.[0]
+              if (activeId && (!window.getSelection()?.toString().trim() || selectionToolbar.highlightIds?.length === 1)) {
+                changeHighlightColor(activeId, color)
+              } else {
+                captureSelection('highlight', color)
+              }
+              setSelectionToolbar(null)
+            }}
+          />
+        ))}
+        <span className="dn-toolbar-divider" />
+        <button
+          onClick={() => {
+            const activeId = selectionToolbar.highlightIds?.[0]
+            if (activeId && !window.getSelection()?.toString().trim()) {
+              setEditing(activeId, true)
+            } else {
+              captureSelection('note')
+            }
+            setSelectionToolbar(null)
+          }}
+        >
+          Note
+        </button>
+        <button
+          onClick={() => {
+            const activeId = selectionToolbar.highlightIds?.[0]
+            if (activeId && !window.getSelection()?.toString().trim()) {
+              setHighlights((items) => items.map((h) => h.id === activeId ? { ...h, display: h.display === 'sticky' ? 'inline' : 'sticky' } : h))
+              highlightsDirtyRef.current = true
+            } else {
+              captureSelection('sticky')
+            }
+            setSelectionToolbar(null)
+          }}
+        >
+          Sticky
+        </button>
+        {selectionToolbar.highlightIds && selectionToolbar.highlightIds.length > 0 && (
+          <>
+            <span className="dn-toolbar-divider" />
+            <button
+              className="dn-toolbar-delete"
+              title="Unhighlight text"
+              onClick={() => {
+                selectionToolbar.highlightIds?.forEach((id) => removeHighlight(id))
+                setSelectionToolbar(null)
+              }}
+            >
+              Unhighlight
+            </button>
+          </>
+        )}
+      </div>
+    )}
 
     {/* In-page annotations layer: anchored in document space, moves naturally with document scrolling */}
     <div className="dn-page-layer">
@@ -1628,16 +1751,17 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
 
     {/* Fixed rail minimap */}
     <div className="dn-annotation-rail" aria-label="Page annotations">
-      {annotationPlacements.map(({ item, index, rect }) => (
+      {annotationPlacements.map(({ item, rect }) => (
         <button
           key={item.id}
-          style={{ top: Math.max(4, Math.min(window.innerHeight - 14, rect.top - (window.pageYOffset ?? window.scrollY ?? 0) + rect.height / 2)) }}
-          title={`Jump to annotation ${index + 1}`}
-          aria-label={`Jump to annotation ${index + 1}`}
+          style={{
+            top: Math.max(4, Math.min(window.innerHeight - 14, rect.top - (window.pageYOffset ?? window.scrollY ?? 0) + rect.height / 2)),
+            background: item.color,
+          }}
+          title={item.text ? `Jump to: “${item.text.slice(0, 35)}${item.text.length > 35 ? '…' : ''}”` : 'Jump to highlight'}
+          aria-label="Jump to highlight"
           onClick={() => document.querySelector<HTMLElement>(`[data-devnotes-highlight="${CSS.escape(item.id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
-        >
-          {index + 1}
-        </button>
+        />
       ))}
     </div>
 
