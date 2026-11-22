@@ -1,4 +1,5 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
 import { DEFAULT_BLOCKED_HOSTS, DEFAULT_SETTINGS, HIGHLIGHT_COLORS, SETTINGS_KEY, hostMatches, isHostDisabled, normalizeHost, normalizeSettings, readSettings, writeSettings, type DevNotesSettings } from './settings'
@@ -487,228 +488,111 @@ function findNearestTextAnchor(clientX: number, clientY: number): { text: string
   return { text, prefix, suffix, start, end }
 }
 
-function StickyNote({
-  title,
-  body,
-  x,
-  y,
-  anchorSnippet,
-  createdAt,
-  onMove,
-  onOpen,
-  onAddEntry,
-  onRemove,
-}: {
-  title: string
-  body: string
-  x: number
-  y: number
-  anchorSnippet?: string
-  createdAt?: number
-  onMove: (pageX: number, pageY: number) => void
-  onOpen: () => void
-  onAddEntry?: (text: string) => void
-  onRemove?: () => void
-}) {
-  const dragOffset = useRef<{ x: number; y: number } | null>(null)
-  const [adding, setAdding] = useState(false)
-  const [draft, setDraft] = useState('')
-  const dateStr = createdAt ? new Date(createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : 'Today'
+// Older versions stored the highlighted text and a source link inside the note body.
+// Hide those lines so annotation notes only show what the user actually wrote.
+const LEGACY_LINE = /^\s*(>|Source:\s*\[|—\s*\[|Related link:)/
 
-  return <section className="dn-sticky-note" style={{ left: x, top: y }} aria-label={`Sticky note: ${title}`}>
-    <div className="dn-sticky-tape" aria-hidden="true" />
-    <header
-      onPointerDown={(event) => {
-        event.preventDefault()
-        event.currentTarget.setPointerCapture(event.pointerId)
-        dragOffset.current = { x: event.pageX - x, y: event.pageY - y }
-      }}
-      onPointerMove={(event) => {
-        if (dragOffset.current) onMove(Math.max(8, event.pageX - dragOffset.current.x), Math.max(8, event.pageY - dragOffset.current.y))
-      }}
-      onPointerUp={() => { dragOffset.current = null }}
-      onPointerCancel={() => { dragOffset.current = null }}
-    >
-      <span>STICKY NOTE · DRAG</span>
-      <strong>{title}</strong>
-    </header>
-    <p>{body.replace(/^>\s?/gm, '').trim().slice(0, 240)}</p>
-    {anchorSnippet && (
-      <div className="dn-sticky-footer">
-        {dateStr} · anchored to “{anchorSnippet.slice(0, 30)}{anchorSnippet.length > 30 ? '…' : ''}”
-      </div>
-    )}
-    <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-      <button onClick={onOpen}>Open</button>
-      {onAddEntry && <button onClick={() => setAdding((v) => !v)}>{adding ? 'Cancel' : '＋ Add thought'}</button>}
-      {onRemove && <button onClick={onRemove} style={{ color: '#8d6259' }}>Delete</button>}
-    </div>
-    {adding && onAddEntry && (
-      <form
-        className="dn-inline-add"
-        onSubmit={(e) => {
-          e.preventDefault()
-          if (draft.trim()) {
-            onAddEntry(draft.trim())
-            setDraft('')
-            setAdding(false)
-          }
-        }}
-      >
-        <input
-          autoFocus
-          placeholder="Add to this sticky…"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-        />
-      </form>
-    )}
-  </section>
+function cleanNoteBody(body: string) {
+  return body.split('\n').filter((line) => !LEGACY_LINE.test(line)).join('\n').replace(/\n{3,}/g, '\n\n').trim()
 }
 
-function InlineMarginCard({
-  item,
-  index,
-  side,
-  x,
-  y,
-  note,
-  penSet,
-  noteFont,
-  onOpen,
-  onAddEntry,
-  onToggleTask,
-  onChangeColor,
-  onRemove,
-}: {
-  item: Highlight
-  index: number
-  side: 'left' | 'right' | 'marker'
-  x: number
-  y: number
-  note?: Note
-  penSet: string
-  noteFont: string
-  onOpen: () => void
-  onAddEntry?: (text: string) => void
-  onToggleTask?: (taskIndex: number, done: boolean) => void
-  onChangeColor?: (color: string) => void
-  onRemove?: () => void
+const CARD_TASK_LINE = /^\s*[-*+]\s+\[([ xX])\]\s*(.*)$/
+
+function renderInline(text: string) {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((part, index) => part.length > 4 && part.startsWith('**') && part.endsWith('**') ? <b key={index}>{part.slice(2, -2)}</b> : part)
+}
+
+function CardBody({ body, editing, onChange, onEditingChange, onToggleTask }: {
+  body: string
+  editing: boolean
+  onChange: (text: string) => void
+  onEditingChange: (editing: boolean) => void
+  onToggleTask: (taskIndex: number, done: boolean) => void
 }) {
-  const [draft, setDraft] = useState('')
-  const [isAdding, setIsAdding] = useState(false)
-  const body = note?.body ?? item.text
+  const ref = useRef<HTMLTextAreaElement>(null)
+  const reading = !editing && body.trim().length > 0
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    el.style.height = '0px'
+    el.style.height = `${el.scrollHeight}px`
+  }, [body, reading])
+  useEffect(() => { if (editing) ref.current?.focus() }, [editing, reading])
 
-  // Parse dated entries or markdown lines from body
-  const lines = body.split('\n').filter(Boolean)
-  const entries: { date?: string; text: string; isTask?: boolean; checked?: boolean; taskIndex?: number }[] = []
-  let taskCounter = 0
-
-  for (const line of lines) {
-    const taskMatch = line.match(/^[-*+]\s+\[([ xX])\]\s*(.*)$/)
-    if (taskMatch) {
-      entries.push({ text: taskMatch[2], isTask: true, checked: taskMatch[1].toLowerCase() === 'x', taskIndex: taskCounter++ })
-      continue
-    }
-    const dateMatch = line.match(/^\*\*([^*]+)\*\*\s*(.*)$/)
-    if (dateMatch) {
-      entries.push({ date: dateMatch[1], text: dateMatch[2] })
-      continue
-    }
-    if (!line.startsWith('>')) {
-      entries.push({ text: line })
-    }
+  if (reading) {
+    const lines = body.split('\n')
+    return <div className="dn-card-read" onClick={() => onEditingChange(true)}>
+      {lines.map((line, index) => {
+        const task = line.match(CARD_TASK_LINE)
+        if (task) {
+          const current = lines.slice(0, index).filter((previous) => CARD_TASK_LINE.test(previous)).length
+          const done = task[1] !== ' '
+          return <label key={index} className="dn-card-task" onClick={(event) => event.stopPropagation()}>
+            <input type="checkbox" checked={done} onChange={(event) => onToggleTask(current, event.target.checked)} />
+            <span className={done ? 'done' : ''}>{task[2]}</span>
+          </label>
+        }
+        return line.trim() ? <p key={index}>{renderInline(line)}</p> : null
+      })}
+    </div>
   }
 
-  return (
-    <div
-      className={`dn-margin-card dn-margin-${side} dn-pen-${penSet} dn-font-${noteFont}`}
-      style={{ left: x, top: y }}
-    >
-      <span
-        className="dn-margin-number"
-        onClick={() => {
-          if (onChangeColor) {
-            const nextColor = HIGHLIGHT_COLORS[(HIGHLIGHT_COLORS.indexOf(item.color as any) + 1) % HIGHLIGHT_COLORS.length]
-            onChangeColor(nextColor)
-          }
-        }}
-        title="Click to cycle highlight color"
-        style={{ cursor: 'pointer' }}
-      >
-        {index + 1}
-      </span>
-      <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
-        <strong onClick={onOpen} style={{ cursor: 'pointer' }}>{note?.title || 'Page note'}</strong>
-        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-          {onAddEntry && (
-            <button
-              style={{ all: 'unset', cursor: 'pointer', fontSize: 10, color: '#65705a', padding: '2px 4px' }}
-              onClick={() => setIsAdding((v) => !v)}
-              title="Add dated entry or task"
-            >
-              {isAdding ? '✕' : '＋ Add'}
-            </button>
-          )}
-          {onRemove && (
-            <button
-              style={{ all: 'unset', cursor: 'pointer', fontSize: 12, color: '#8d6259', padding: '0 3px' }}
-              onClick={onRemove}
-              title="Remove annotation"
-            >
-              ×
-            </button>
-          )}
-        </div>
-      </div>
+  return <textarea
+    ref={ref}
+    className="dn-card-input"
+    value={body}
+    rows={1}
+    placeholder="Write a note…"
+    aria-label="Annotation note"
+    onChange={(event) => onChange(event.target.value)}
+    onFocus={() => onEditingChange(true)}
+    onBlur={() => onEditingChange(false)}
+    onKeyDown={(event) => { event.stopPropagation(); if (event.key === 'Escape') event.currentTarget.blur() }}
+    onKeyUp={(event) => event.stopPropagation()}
+    onKeyPress={(event) => event.stopPropagation()}
+  />
+}
 
-      <div className="dn-inline-journal">
-        {entries.slice(0, 4).map((entry, i) => (
-          entry.isTask ? (
-            <label key={i} className="dn-inline-task" onClick={(e) => e.stopPropagation()}>
-              <input
-                type="checkbox"
-                checked={entry.checked}
-                onChange={(e) => onToggleTask?.(entry.taskIndex ?? 0, e.target.checked)}
-              />
-              <span style={{ textDecoration: entry.checked ? 'line-through' : 'none', color: entry.checked ? '#8a8d82' : 'inherit' }}>
-                {entry.text.slice(0, 65)}
-              </span>
-            </label>
-          ) : (
-            <div key={i} className="dn-journal-entry">
-              {entry.date && <b className="dn-entry-date">{entry.date}</b>}
-              <span>{entry.text.slice(0, 75)}</span>
-            </div>
-          )
-        ))}
-        {entries.length === 0 && (
-          <span style={{ color: '#77796f', fontSize: 10 }}>{item.text.slice(0, 75)}</span>
-        )}
-      </div>
-
-      {isAdding && onAddEntry && (
-        <form
-          className="dn-inline-add"
-          onSubmit={(e) => {
-            e.preventDefault()
-            if (draft.trim()) {
-              onAddEntry(draft.trim())
-              setDraft('')
-              setIsAdding(false)
-            }
-          }}
-        >
-          <input
-            autoFocus
-            placeholder="Add to this note (or [ ] task)…"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-          />
-        </form>
-      )}
+function AnnotationCard({ item, variant, x, y, body, editing, penSet, noteFont, onChange, onEditingChange, onToggleTask, onColor, onOpen, onRemove, onMove }: {
+  item: Highlight
+  variant: 'margin' | 'sticky'
+  x: number
+  y: number
+  body: string
+  editing: boolean
+  penSet: string
+  noteFont: string
+  onChange: (text: string) => void
+  onEditingChange: (editing: boolean) => void
+  onToggleTask: (taskIndex: number, done: boolean) => void
+  onColor: () => void
+  onOpen: () => void
+  onRemove: () => void
+  onMove?: (pageX: number, pageY: number) => void
+}) {
+  const dragOffset = useRef<{ x: number; y: number } | null>(null)
+  const tilt = variant === 'sticky' && !editing ? ((item.id.charCodeAt(0) + item.id.charCodeAt(1)) % 5 - 2) * 0.4 : 0
+  const style = { left: x, top: y, '--accent': item.color, transform: tilt ? `rotate(${tilt}deg)` : undefined } as CSSProperties
+  return <section className={`dn-card dn-card-${variant} dn-pen-${penSet} dn-font-${noteFont}`} style={style} aria-label={variant === 'sticky' ? 'Sticky note' : 'Margin note'}>
+    {variant === 'sticky' && <>
+      <div
+        className="dn-card-grip"
+        role="presentation"
+        onPointerDown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); dragOffset.current = { x: event.pageX - x, y: event.pageY - y } }}
+        onPointerMove={(event) => { if (dragOffset.current) onMove?.(Math.max(8, event.pageX - dragOffset.current.x), Math.max(8, event.pageY - dragOffset.current.y)) }}
+        onPointerUp={() => { dragOffset.current = null }}
+        onPointerCancel={() => { dragOffset.current = null }}
+      />
+      <div className="dn-sticky-tape" aria-hidden="true" />
+    </>}
+    <CardBody body={body} editing={editing} onChange={onChange} onEditingChange={onEditingChange} onToggleTask={onToggleTask} />
+    <div className="dn-card-actions">
+      <button type="button" aria-label="Change colour" title="Change colour" onMouseDown={(event) => event.preventDefault()} onClick={onColor}><i style={{ background: item.color }} /></button>
+      <button type="button" onClick={() => onEditingChange(true)}>Edit</button>
+      <button type="button" onClick={onOpen}>Open</button>
+      <button type="button" aria-label="Delete annotation" title="Delete annotation" onClick={onRemove}>Delete</button>
     </div>
-  )
+  </section>
 }
 
 type SearchQuery = { terms: string[]; tags: string[]; sites: string[]; flags: string[]; after?: number; before?: number }
@@ -785,6 +669,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   const [allPageMeta, setAllPageMeta] = useState<Record<string, PageMeta>>({})
   const [highlights, setHighlights] = useState<Highlight[]>([])
   const [selectionToolbar, setSelectionToolbar] = useState<{ x: number; y: number } | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [annotationLayoutTick, setAnnotationLayoutTick] = useState(0)
   const [orphanedHighlights, setOrphanedHighlights] = useState<string[]>([])
   const [highlightsForUrl, setHighlightsForUrl] = useState('')
@@ -1074,8 +959,10 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   const allNotes = useMemo(() => Object.entries(pages).flatMap(([url, items]) => items.map((note) => ({ note, url }))), [pages])
   const availableTags = useMemo(() => [...new Set(allNotes.flatMap(({ note }) => note.tags ?? []))].sort((a, b) => a.localeCompare(b)), [allNotes])
   const backlinks = useMemo(() => selected ? allNotes.filter(({ note }) => note.id !== selected.id && (note.body.toLowerCase().includes(`[[${selected.title.trim().toLowerCase()}]]`) || note.body.includes(`[[id:${selected.id}|`))) : [], [allNotes, selected])
+  const annotationNoteIds = useMemo(() => new Set(highlights.flatMap((item) => item.noteId ? [item.noteId] : [])), [highlights])
+
   const filteredNotes = useMemo(() => {
-    const source = showAllNotes || deferredQuery.trim() || showTasks ? allNotes : notes.map((note) => ({ note, url: pageUrl }))
+    const source = showAllNotes || deferredQuery.trim() || showTasks ? allNotes : notes.filter((note) => !annotationNoteIds.has(note.id)).map((note) => ({ note, url: pageUrl }))
     const parsed = parseSearchQuery(deferredQuery)
     const from = dateFrom ? new Date(`${dateFrom}T00:00:00`).getTime() : parsed.after
     const to = dateTo ? new Date(`${dateTo}T23:59:59`).getTime() : parsed.before
@@ -1089,7 +976,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     })
     const rank = (note: Note, url: string) => parsed.terms.reduce((score, term) => score + (note.title.toLowerCase().includes(term) ? 8 : note.body.toLowerCase().includes(term) ? 4 : safeHostname(url).toLowerCase().includes(term) ? 3 : 1), 0)
     return matches.sort((a, b) => Number(Boolean(b.note.pinned)) - Number(Boolean(a.note.pinned)) || (parsed.terms.length ? rank(b.note, b.url) - rank(a.note, a.url) : sortMode === 'title' ? a.note.title.localeCompare(b.note.title) : sortMode === 'created' ? b.note.createdAt - a.note.createdAt : b.note.updatedAt - a.note.updatedAt))
-  }, [allNotes, notes, pageUrl, deferredQuery, showAllNotes, collectionFilter, showArchived, showFavorites, showTasks, domainFilter, sortMode, dateFrom, dateTo])
+  }, [allNotes, annotationNoteIds, notes, pageUrl, deferredQuery, showAllNotes, collectionFilter, showArchived, showFavorites, showTasks, domainFilter, sortMode, dateFrom, dateTo])
 
   const updateSelected = (patch: Partial<Note>) => {
     if (!selected) return
@@ -1303,28 +1190,33 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     }))
   }
 
-  const addInlineEntryToNote = (noteId: string, entryText: string) => {
-    const note = selectedNotes.find((n) => n.id === noteId) || allNotes.find(({ note: n }) => n.id === noteId)?.note
-    if (!note) return
-    const now = new Date()
-    const dateStr = now.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
-    const trimmed = entryText.trim()
-    let addition = ''
-    if (/^[-*+]\s+\[/.test(trimmed)) {
-      // already formatted as "- [ ] task" or "- [x] task"
-      addition = `\n${trimmed}`
-    } else if (trimmed.startsWith('[ ]') || trimmed.startsWith('[x]') || trimmed.startsWith('[X]')) {
-      // user typed "[ ] task text"
-      addition = `\n- ${trimmed}`
-    } else {
-      addition = `\n\n**${dateStr}** ${trimmed}`
+  const setEditing = (id: string, on: boolean) => setEditingId((current) => on ? id : current === id ? null : current)
+
+  const cycleHighlightColor = (item: Highlight) => {
+    const colors = HIGHLIGHT_COLORS as readonly string[]
+    changeHighlightColor(item.id, colors[(colors.indexOf(item.color) + 1) % colors.length])
+  }
+
+  const openAnnotationNote = (item: Highlight) => {
+    if (!item.noteId) return
+    setOpen(true)
+    setSelectedPageUrl(allNotes.find(({ note }) => note.id === item.noteId)?.url ?? pageUrl)
+    setSelectedId(item.noteId)
+  }
+
+  // The note is created lazily, on the first character typed, so an untouched card never leaves an empty note behind.
+  const setAnnotationText = (item: Highlight, text: string) => {
+    if (item.noteId) {
+      const noteUrl = allNotes.find(({ note }) => note.id === item.noteId)?.url ?? pageUrl
+      persist({ ...pages, [noteUrl]: (pages[noteUrl] ?? []).map((note) => note.id === item.noteId ? { ...note, body: text, updatedAt: Date.now() } : note) })
+      return
     }
-    const updatedBody = `${note.body.trim()}${addition}`
-    const noteUrl = selectedNotes.some((n) => n.id === noteId) ? selectedPageUrl : (allNotes.find(({ note: n }) => n.id === noteId)?.url ?? pageUrl)
-    persist({
-      ...pages,
-      [noteUrl]: (pages[noteUrl] ?? []).map((n) => n.id === noteId ? { ...n, body: updatedBody, updatedAt: Date.now() } : n),
-    })
+    if (!text.trim()) return
+    const now = Date.now()
+    const note: Note = { id: crypto.randomUUID(), title: '', body: text, tags: [], collectionIds: [], pinned: false, favorite: false, archived: false, createdAt: now, updatedAt: now }
+    persist({ ...pages, [pageUrl]: [note, ...(pages[pageUrl] ?? [])] })
+    highlightsDirtyRef.current = true
+    setHighlights((items) => items.map((entry) => entry.id === item.id ? { ...entry, noteId: note.id } : entry))
   }
 
   const toggleInlineTask = (noteId: string, taskIndex: number, done: boolean) => {
@@ -1460,7 +1352,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     } catch { setImportError('Could not read this backup file.') }
   }
 
-  const captureSelection = useCallback((action: 'note' | 'quote' | 'link' | 'sticky' = 'note', color = settings.highlightColor) => {
+  const captureSelection = useCallback((action: 'highlight' | 'note' | 'sticky' = 'note', color = settings.highlightColor): boolean => {
     const selection = window.getSelection()
     let text = ''
     let prefix = ''
@@ -1496,7 +1388,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       }
     }
 
-    if (!text) { createNote(); return }
+    if (!text) { createNote(); return false }
 
     const item: Highlight = {
       id: crypto.randomUUID(),
@@ -1512,24 +1404,12 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     }
 
     wrapTextOffsets(nodes, start, end, item.id, item.color, item.shape, highlights.length + 1)
-    const quoteJump = `${pageUrl}#:~:text=${encodeURIComponent(text.slice(0, 120))}`
-    const linkedUrl = action === 'link' ? window.prompt('Link this annotation to a URL:', pageUrl) : null
-    if (action === 'link' && !linkedUrl) {
-      document.querySelectorAll<HTMLElement>(`[data-devnotes-highlight="${CSS.escape(item.id)}"]`).forEach((mark) => mark.replaceWith(...Array.from(mark.childNodes)))
-      return
-    }
-    const body = action === 'note' || action === 'sticky'
-      ? `> ${text}\n\nSource: [Open the original passage](${quoteJump})\n\n`
-      : action === 'quote'
-        ? `> ${text}\n\n— [${pageTitle}](${quoteJump})\n\n`
-        : `> ${text}\n\nRelated link: [${linkedUrl}](${linkedUrl})\n\nSource: [${pageTitle}](${quoteJump})\n\n`
-
-    item.noteId = createNote(body, action === 'quote' ? `Quote: ${text.slice(0, 48)}` : action === 'link' ? `Link: ${text.slice(0, 48)}` : '')
-    const next = [...highlights, item]
     highlightsDirtyRef.current = true
     setOrphanedHighlights((items) => items.filter((id) => id !== item.id))
-    setHighlights(next)
-  }, [createNote, highlights, pageTitle, pageUrl, settings.highlightColor, settings.highlightStyle])
+    setHighlights([...highlights, item])
+    if (action !== 'highlight') setEditingId(item.id)
+    return true
+  }, [createNote, highlights, settings.highlightColor, settings.highlightStyle])
 
   const clipArticle = () => {
     const candidates = Array.from(document.querySelectorAll<HTMLElement>('article, main, [role="main"]'))
@@ -1545,7 +1425,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   }
 
   useEffect(() => {
-    const onCapture = () => { setOpen(true); captureSelection() }
+    const onCapture = () => { if (!captureSelection('note')) setOpen(true) }
     const onNewNote = () => { setOpen(true); createNote() }
     const onFocusSearch = () => { setOpen(true); window.setTimeout(() => searchRef.current?.focus(), 0) }
     messageTarget.addEventListener('devnotes-capture-selection', onCapture)
@@ -1626,6 +1506,11 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
         continue
       }
 
+      if (!note && editingId !== item.id) {
+        placements.push({ item, index, side: 'marker', x: rect.left, y: rect.bottom, anchorX: rect.left, anchorY: rect.bottom, rect })
+        continue
+      }
+
       // Margin cards vs inline
       const rightSpace = pageWidth - rect.right
       const leftSpace = rect.left
@@ -1647,10 +1532,11 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
         const lastBottom = isRight ? rightLastBottom : leftLastBottom
         const desiredY = Math.max(anchorCenterY - 24, lastBottom + 12)
         const y = desiredY
-        if (isRight) rightLastBottom = y + 110
-        else leftLastBottom = y + 110
+        const cardHeight = Math.min(260, 52 + Math.ceil(cleanNoteBody(note?.body ?? '').length / 26) * 20)
+        if (isRight) rightLastBottom = y + cardHeight
+        else leftLastBottom = y + cardHeight
 
-        const x = isRight ? rect.right + 20 : rect.left - 280
+        const x = isRight ? rect.right + 20 : rect.left - 250
         placements.push({
           item,
           index,
@@ -1666,70 +1552,75 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     }
 
     return placements
-  }, [allNotes, annotationLayoutTick, highlights])
+  }, [allNotes, annotationLayoutTick, editingId, highlights])
 
   return <>
-    {selectionToolbar && <div className="dn-selection-toolbar" style={{ left: selectionToolbar.x, top: selectionToolbar.y }} onMouseDown={(event) => event.preventDefault()} aria-label="Text annotation tools">{HIGHLIGHT_COLORS.map((color) => <button key={color} className="dn-toolbar-color" aria-label={`Highlight with ${color}`} title={`Highlight with ${color}`} style={{ background: color }} onClick={() => { captureSelection('note', color); setSelectionToolbar(null) }} />)}<span className="dn-toolbar-divider" /><button onClick={() => { captureSelection('note'); setSelectionToolbar(null) }}>Comment</button><button onClick={() => { captureSelection('sticky'); setSelectionToolbar(null) }}>Sticky note</button><button onClick={() => { captureSelection('quote'); setSelectionToolbar(null) }}>Quote</button><button onClick={() => { captureSelection('link'); setSelectionToolbar(null) }}>Link</button></div>}
+    {selectionToolbar && <div className="dn-selection-toolbar" style={{ left: selectionToolbar.x, top: selectionToolbar.y }} onMouseDown={(event) => event.preventDefault()} aria-label="Text annotation tools">{HIGHLIGHT_COLORS.map((color) => <button key={color} className="dn-toolbar-color" aria-label={`Highlight with ${color}`} title={`Highlight with ${color}`} style={{ background: color }} onClick={() => { captureSelection('highlight', color); setSelectionToolbar(null) }} />)}<span className="dn-toolbar-divider" /><button onClick={() => { captureSelection('note'); setSelectionToolbar(null) }}>Note</button><button onClick={() => { captureSelection('sticky'); setSelectionToolbar(null) }}>Sticky</button></div>}
 
     {/* In-page annotations layer: anchored in document space, moves naturally with document scrolling */}
     <div className="dn-page-layer">
-      {/* Sticky Notes */}
+      {/* Sticky notes */}
       {highlights.filter((item) => item.display === 'sticky').map((item) => {
         const placement = annotationPlacements.find((p) => p.item.id === item.id)
-        const note = allNotes.find(({ note: candidate }) => candidate.id === item.noteId)?.note
-        if (!note || !placement) return null
-        return <StickyNote
+        if (!placement) return null
+        const note = placement.note
+        return <AnnotationCard
           key={item.id}
-          title={note.title || 'Sticky note'}
-          body={note.body}
+          item={item}
+          variant="sticky"
           x={placement.x}
           y={placement.y}
-          anchorSnippet={item.text}
-          createdAt={item.createdAt}
-          onMove={(x, y) => moveStickyNote(item.id, x, y)}
-          onOpen={() => { setOpen(true); setSelectedPageUrl(pageUrl); setSelectedId(note.id) }}
-          onAddEntry={(text) => addInlineEntryToNote(note.id, text)}
+          body={cleanNoteBody(note?.body ?? '')}
+          editing={editingId === item.id}
+          penSet={settings.penSet}
+          noteFont={settings.noteFont}
+          onChange={(text) => setAnnotationText(item, text)}
+          onEditingChange={(on) => setEditing(item.id, on)}
+          onToggleTask={(index, done) => { if (note) toggleInlineTask(note.id, index, done) }}
+          onColor={() => cycleHighlightColor(item)}
+          onOpen={() => openAnnotationNote(item)}
           onRemove={() => removeHighlight(item.id)}
+          onMove={(x, y) => moveStickyNote(item.id, x, y)}
         />
       })}
 
-      {/* Dotted Connectors — absolute in page space, full document height */}
-      {!open && (
-        <svg
-          className="dn-annotation-connectors"
-          aria-hidden="true"
-          style={{ height: Math.max(document.documentElement.scrollHeight, document.documentElement.clientHeight) }}
-        >
-          {annotationPlacements.filter(({ side, item }) => side !== 'marker' || item.display === 'sticky').map(({ item, side, anchorX, anchorY, x, y }) => {
-            const isRight = side === 'right' || (item.display === 'sticky' && (item.placement?.side ?? 'right') === 'right')
-            const endX = isRight ? x : x + 260
-            const endY = y + 36
-            return (
-              <g key={item.id}>
-                <circle cx={anchorX} cy={anchorY} r="3" />
-                <path d={`M ${anchorX} ${anchorY} C ${(anchorX + endX) / 2} ${anchorY}, ${(anchorX + endX) / 2} ${endY}, ${endX} ${endY}`} />
-              </g>
-            )
-          })}
-        </svg>
-      )}
+      {/* Dotted connectors: absolute in page space, full document height */}
+      <svg
+        className="dn-annotation-connectors"
+        aria-hidden="true"
+        style={{ height: Math.max(document.documentElement.scrollHeight, document.documentElement.clientHeight) }}
+      >
+        {annotationPlacements.filter(({ side, item, note }) => item.display === 'sticky' || (side !== 'marker' && (note || editingId === item.id))).map(({ item, side, anchorX, anchorY, x, y }) => {
+          const isSticky = item.display === 'sticky'
+          const isRight = side === 'right' || (isSticky && (item.placement?.side ?? 'right') === 'right')
+          const endX = isRight ? x : x + (isSticky ? 260 : 230)
+          const endY = y + 26
+          return (
+            <g key={item.id}>
+              <circle cx={anchorX} cy={anchorY} r="3" />
+              <path d={`M ${anchorX} ${anchorY} C ${(anchorX + endX) / 2} ${anchorY}, ${(anchorX + endX) / 2} ${endY}, ${endX} ${endY}`} />
+            </g>
+          )
+        })}
+      </svg>
 
-      {/* Inline and Margin Cards */}
-      {!open && annotationPlacements.filter(({ item }) => item.display !== 'sticky').map(({ item, index, side, x, y, note }) => (
-        <InlineMarginCard
+      {/* Margin notes */}
+      {annotationPlacements.filter(({ item, note }) => item.display !== 'sticky' && (note || editingId === item.id)).map(({ item, x, y, note }) => (
+        <AnnotationCard
           key={item.id}
           item={item}
-          index={index}
-          side={side}
+          variant="margin"
           x={x}
           y={y}
-          note={note}
+          body={cleanNoteBody(note?.body ?? '')}
+          editing={editingId === item.id}
           penSet={settings.penSet}
           noteFont={settings.noteFont}
-          onOpen={() => { if (item.noteId) { setOpen(true); setSelectedPageUrl(pageUrl); setSelectedId(item.noteId) } }}
-          onAddEntry={(text) => { if (item.noteId) addInlineEntryToNote(item.noteId, text) }}
-          onToggleTask={(taskIndex, done) => { if (item.noteId) toggleInlineTask(item.noteId, taskIndex, done) }}
-          onChangeColor={(color) => changeHighlightColor(item.id, color)}
+          onChange={(text) => setAnnotationText(item, text)}
+          onEditingChange={(on) => setEditing(item.id, on)}
+          onToggleTask={(index, done) => { if (note) toggleInlineTask(note.id, index, done) }}
+          onColor={() => cycleHighlightColor(item)}
+          onOpen={() => openAnnotationNote(item)}
           onRemove={() => removeHighlight(item.id)}
         />
       ))}
