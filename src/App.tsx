@@ -1408,7 +1408,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     setAnnotationLayoutTick((t) => t + 1)
   }
 
-  const removeHighlight = (id: string) => {
+  const deleteAnnotationCard = (id: string) => {
     highlightsDirtyRef.current = true
     document.querySelectorAll<HTMLElement>(`[data-devnotes-highlight="${CSS.escape(id)}"]`).forEach((mark) => {
       const parent = mark.parentNode
@@ -1422,6 +1422,12 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     const target = highlights.find((item) => item.id === id)
     if (target?.noteId) {
       const noteUrl = allNotes.find(({ note }) => note.id === target.noteId)?.url ?? pageUrl
+      const noteObj = (pages[noteUrl] ?? []).find((note) => note.id === target.noteId)
+      if (noteObj) {
+        const nextTrash = boundedTrash([...trash, { note: noteObj, url: noteUrl, deletedAt: Date.now() }], settings.trashRetentionDays)
+        setTrash(nextTrash)
+        void writeTrash(nextTrash, settings.trashRetentionDays)
+      }
       persist({
         ...pages,
         [noteUrl]: (pages[noteUrl] ?? []).filter((note) => note.id !== target.noteId),
@@ -1430,6 +1436,24 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     setHighlights((items) => items.filter((item) => item.id !== id))
     setEditingId((current) => current === id ? null : current)
     setAnnotationLayoutTick((t) => t + 1)
+  }
+
+  const removeHighlight = (id: string) => {
+    const target = highlights.find((item) => item.id === id)
+    if (!target) return
+
+    // If this highlight has a note, ONLY remove the highlight color/shape from the text; NEVER delete the note!
+    if (target.noteId && (target.color !== 'transparent' || target.shape !== 'none')) {
+      highlightsDirtyRef.current = true
+      document.querySelectorAll<HTMLElement>(`[data-devnotes-highlight="${CSS.escape(id)}"]`).forEach((mark) => {
+        mark.style.cssText = `${highlightStyle('none', 'transparent')} color:inherit;`
+      })
+      setHighlights((items) => items.map((item) => item.id === id ? { ...item, color: 'transparent', shape: 'none' } : item))
+      return
+    }
+
+    // If there is no note attached, or it's already transparent, delete the card and mark
+    deleteAnnotationCard(id)
   }
 
   const exportMarkdown = () => {
@@ -1800,7 +1824,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
             <button
               type="button"
               className="dn-toolbar-delete"
-              title="Remove annotation"
+              title="Remove highlight from text"
               onPointerDown={(event) => event.stopPropagation()}
               onMouseDown={(event) => {
                 event.preventDefault()
@@ -1815,7 +1839,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
                 setSelectionToolbar(null)
               }}
             >
-              Remove
+              Remove highlight
             </button>
           </>
         )}
@@ -1859,7 +1883,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
           onToggleTask={(index, done) => { if (note) toggleInlineTask(note.id, index, done) }}
           onColor={() => cycleHighlightColor(item)}
           onOpen={() => openAnnotationNote(item)}
-          onRemove={() => removeHighlight(item.id)}
+          onRemove={() => deleteAnnotationCard(item.id)}
           onMove={(newX, newY) => moveNote(item.id, newX, newY)}
         />
       ))}
