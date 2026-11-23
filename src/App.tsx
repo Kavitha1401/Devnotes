@@ -8,7 +8,7 @@ type Note = { id: string; title: string; body: string; tags?: string[]; collecti
 type Revision = { id: string; title: string; body: string; savedAt: number }
 type PageNotes = Record<string, Note[]>
 type Collection = { id: string; name: string; createdAt: number }
-type NotePlacement = { side: 'left' | 'right' | 'inline'; dx: number; dy: number }
+type NotePlacement = { side: 'left' | 'right' | 'inline'; dx: number; dy: number; manual?: boolean }
 type Highlight = { id: string; noteId?: string; text: string; prefix: string; suffix: string; color: string; createdAt: number; shape?: 'marker' | 'underline' | 'box' | 'bracket' | 'none'; display?: 'inline' | 'sticky'; placement?: NotePlacement; status?: 'attached' | 'orphan'; stickyX?: number; stickyY?: number }
 type PageTask = { id: string; text: string; done: boolean }
 type PageMeta = { status: 'to-read' | 'reading' | 'done'; whySaved: string; tasks: PageTask[]; journalEntry: string; updatedAt: number }
@@ -94,7 +94,7 @@ function validateBackup(value: unknown): BackupFile | null {
       if (!/^https?:$/.test(new URL(normalizedUrl).protocol)) return null
       normalizedHighlights[normalizedUrl] = (items as Highlight[]).filter((item) => item.text.length > 0 && item.text.length <= 5_000).map((item) => {
         const placement: NotePlacement = item.placement && typeof item.placement.dx === 'number' && typeof item.placement.dy === 'number'
-          ? { side: item.placement.side === 'left' ? 'left' : 'right', dx: Math.round(item.placement.dx), dy: Math.round(item.placement.dy) }
+          ? { side: item.placement.side === 'left' ? 'left' : 'right', dx: Math.round(item.placement.dx), dy: Math.round(item.placement.dy), manual: Boolean(item.placement.manual) }
           : { side: 'right', dx: 24, dy: 0 }
         return {
           ...item,
@@ -232,7 +232,7 @@ function normalizeHighlights(value: unknown): Record<string, Highlight[]> {
           .filter((item): item is Highlight => isRecord(item) && typeof item.id === 'string' && typeof item.text === 'string' && typeof item.prefix === 'string' && typeof item.suffix === 'string' && typeof item.color === 'string' && item.text.length <= 5_000)
           .map((item) => {
             const placement: NotePlacement = item.placement && typeof item.placement.dx === 'number' && typeof item.placement.dy === 'number'
-              ? { side: item.placement.side === 'left' ? 'left' : 'right', dx: Math.round(item.placement.dx), dy: Math.round(item.placement.dy) }
+              ? { side: item.placement.side === 'left' ? 'left' : 'right', dx: Math.round(item.placement.dx), dy: Math.round(item.placement.dy), manual: Boolean(item.placement.manual) }
               : { side: 'right', dx: 24, dy: 0 }
             return {
               ...item,
@@ -575,9 +575,8 @@ function CardBody({ body, editing, onChange, onEditingChange, onToggleTask }: {
   />
 }
 
-function AnnotationCard({ item, variant, x, y, body, editing, penSet, noteFont, onChange, onEditingChange, onToggleTask, onColor, onOpen, onRemove, onMove }: {
+function AnnotationCard({ item, x, y, body, editing, penSet, noteFont, onChange, onEditingChange, onToggleTask, onColor, onOpen, onRemove, onMove }: {
   item: Highlight
-  variant: 'margin' | 'sticky'
   x: number
   y: number
   body: string
@@ -593,46 +592,52 @@ function AnnotationCard({ item, variant, x, y, body, editing, penSet, noteFont, 
   onMove?: (pageX: number, pageY: number) => void
 }) {
   const dragOffset = useRef<{ x: number; y: number } | null>(null)
-  const isSticky = variant === 'sticky'
-  const tilt = isSticky && !editing ? ((item.id.charCodeAt(0) + item.id.charCodeAt(1)) % 5 - 2) * 0.7 : 0
+  const isDragging = useRef(false)
   const style = {
     left: x,
     top: y,
     '--accent': item.color === 'transparent' ? '#5c7049' : item.color,
-    transform: tilt ? `rotate(${tilt}deg)` : undefined
   } as CSSProperties
 
   return <section
-    className={`dn-card dn-card-${variant} dn-pen-${penSet} dn-font-${noteFont}`}
+    className={`dn-card dn-pen-${penSet} dn-font-${noteFont}`}
     style={style}
-    aria-label={isSticky ? 'Sticky note' : 'Margin note'}
+    aria-label="Note"
   >
-    {isSticky ? (
-      <>
-        <div
-          className="dn-card-grip"
-          role="presentation"
-          title="Drag sticky note"
-          onPointerDown={(event) => {
-            event.preventDefault()
-            event.currentTarget.setPointerCapture(event.pointerId)
-            dragOffset.current = { x: event.pageX - x, y: event.pageY - y }
-          }}
-          onPointerMove={(event) => {
-            if (dragOffset.current) onMove?.(Math.max(8, event.pageX - dragOffset.current.x), Math.max(8, event.pageY - dragOffset.current.y))
-          }}
-          onPointerUp={() => { dragOffset.current = null }}
-          onPointerCancel={() => { dragOffset.current = null }}
-        >
-          <span className="dn-card-grip-label">STICKY NOTE · DRAG</span>
-        </div>
-        <div className="dn-sticky-tape" aria-hidden="true" />
-      </>
-    ) : (
-      <div className="dn-card-margin-header">
-        <span className="dn-card-badge">NOTE</span>
-      </div>
-    )}
+    <div
+      className="dn-card-header"
+      role="presentation"
+      title="Drag to place anywhere"
+      onPointerDown={(event) => {
+        if ((event.target as HTMLElement).closest('button, input, textarea')) return
+        event.preventDefault()
+        event.currentTarget.setPointerCapture(event.pointerId)
+        dragOffset.current = { x: event.pageX - x, y: event.pageY - y }
+        isDragging.current = true
+      }}
+      onPointerMove={(event) => {
+        if (isDragging.current && dragOffset.current) {
+          onMove?.(Math.max(8, event.pageX - dragOffset.current.x), Math.max(8, event.pageY - dragOffset.current.y))
+        }
+      }}
+      onPointerUp={(event) => {
+        if (isDragging.current) {
+          try { event.currentTarget.releasePointerCapture(event.pointerId) } catch { /* ignore */ }
+          dragOffset.current = null
+          isDragging.current = false
+        }
+      }}
+      onPointerCancel={(event) => {
+        if (isDragging.current) {
+          try { event.currentTarget.releasePointerCapture(event.pointerId) } catch { /* ignore */ }
+          dragOffset.current = null
+          isDragging.current = false
+        }
+      }}
+    >
+      <span className="dn-card-badge">NOTE</span>
+      <span className="dn-card-drag-hint">⋮⋮ Drag</span>
+    </div>
     <CardBody body={body} editing={editing} onChange={onChange} onEditingChange={onEditingChange} onToggleTask={onToggleTask} />
     <div className="dn-card-actions">
       <button type="button" aria-label="Change colour" title="Change colour" onMouseDown={(event) => event.preventDefault()} onClick={onColor}>
@@ -1290,38 +1295,29 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     setHighlights((items) => items.map((item) => item.id === id ? { ...item, color } : item))
   }
 
-  const moveStickyNote = (id: string, droppedPageX: number, droppedPageY: number) => {
+  const moveNote = (id: string, droppedPageX: number, droppedPageY: number) => {
     highlightsDirtyRef.current = true
     const mark = document.querySelector<HTMLElement>(`[data-devnotes-highlight="${CSS.escape(id)}"]`)
     const scrollX = window.pageXOffset ?? window.scrollX ?? 0
     const scrollY = window.pageYOffset ?? window.scrollY ?? 0
-    let side: 'left' | 'right' = 'right'
     let dx = 24
     let dy = 0
+    let side: 'left' | 'right' = 'right'
 
     if (mark) {
       const r = mark.getBoundingClientRect()
       const anchorLeft = r.left + scrollX
-      const anchorRight = r.right + scrollX
       const anchorTop = r.top + scrollY
-      const anchorMidX = (anchorLeft + anchorRight) / 2
-      const noteMidX = droppedPageX + 130 // half of 260px width
-
-      if (noteMidX < anchorMidX) {
-        side = 'left'
-        dx = Math.max(8, Math.round(anchorLeft - (droppedPageX + 260)))
-      } else {
-        side = 'right'
-        dx = Math.max(8, Math.round(droppedPageX - anchorRight))
-      }
+      dx = Math.round(droppedPageX - anchorLeft)
       dy = Math.round(droppedPageY - anchorTop)
+      side = dx >= 0 ? 'right' : 'left'
     }
 
     setHighlights((items) => items.map((item) => {
       if (item.id !== id) return item
       return {
         ...item,
-        placement: { side, dx, dy },
+        placement: { side, dx, dy, manual: true },
         stickyX: undefined,
         stickyY: undefined,
       }
@@ -1642,17 +1638,37 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       const { item, index, rect, note } = entry
       const anchorCenterY = rect.top + rect.height / 2
 
-      if (item.display === 'sticky') {
-        const side = item.placement?.side ?? 'right'
-        const dx = item.placement?.dx ?? 24
-        const dy = item.placement?.dy ?? -10
-        const width = 260
+      // If user manually placed the note anywhere on the page:
+      if (item.placement?.manual && typeof item.placement.dx === 'number' && typeof item.placement.dy === 'number') {
+        const x = rect.left + item.placement.dx
+        const y = rect.top + item.placement.dy
+        const isRight = x >= rect.left
+        placements.push({
+          item,
+          index,
+          side: isRight ? 'right' : 'left',
+          x,
+          y,
+          anchorX: isRight ? rect.right : rect.left,
+          anchorY: anchorCenterY,
+          rect,
+          note,
+        })
+        continue
+      }
+
+      // Legacy sticky placement support
+      if (item.display === 'sticky' && typeof item.placement?.dx === 'number' && typeof item.placement?.dy === 'number') {
+        const side = item.placement.side ?? 'right'
+        const dx = item.placement.dx ?? 24
+        const dy = item.placement.dy ?? -10
+        const width = 240
         const x = side === 'left' ? Math.max(12, rect.left - width - dx) : Math.min(pageWidth - width - 12, rect.right + dx)
         const y = rect.top + dy
         placements.push({
           item,
           index,
-          side: 'marker',
+          side: side === 'left' ? 'left' : 'right',
           x,
           y,
           anchorX: side === 'left' ? rect.left : rect.right,
@@ -1778,38 +1794,13 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
         >
           Note
         </button>
-        <button
-          type="button"
-          onPointerDown={(event) => event.stopPropagation()}
-          onMouseDown={(event) => {
-            event.preventDefault()
-            event.stopPropagation()
-          }}
-          onClick={(event) => {
-            event.preventDefault()
-            event.stopPropagation()
-            const activeId = selectionToolbar.highlightIds?.[0]
-            const selection = window.getSelection()
-            const hasSelection = Boolean(selection && !selection.isCollapsed && selection.toString().trim())
-            if (activeId && !hasSelection) {
-              setHighlights((items) => items.map((h) => h.id === activeId ? { ...h, display: h.display === 'sticky' ? 'inline' : 'sticky' } : h))
-              highlightsDirtyRef.current = true
-            } else {
-              captureSelection('sticky')
-              selection?.removeAllRanges()
-            }
-            setSelectionToolbar(null)
-          }}
-        >
-          Sticky
-        </button>
         {selectionToolbar.highlightIds && selectionToolbar.highlightIds.length > 0 && (
           <>
             <span className="dn-toolbar-divider" />
             <button
               type="button"
               className="dn-toolbar-delete"
-              title="Unhighlight text"
+              title="Remove annotation"
               onPointerDown={(event) => event.stopPropagation()}
               onMouseDown={(event) => {
                 event.preventDefault()
@@ -1824,7 +1815,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
                 setSelectionToolbar(null)
               }}
             >
-              Unhighlight
+              Remove
             </button>
           </>
         )}
@@ -1833,42 +1824,16 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
 
     {/* In-page annotations layer: anchored in document space, moves naturally with document scrolling */}
     <div className="dn-page-layer">
-      {/* Sticky notes */}
-      {highlights.filter((item) => item.display === 'sticky').map((item) => {
-        const placement = annotationPlacements.find((p) => p.item.id === item.id)
-        if (!placement) return null
-        const note = placement.note
-        return <AnnotationCard
-          key={item.id}
-          item={item}
-          variant="sticky"
-          x={placement.x}
-          y={placement.y}
-          body={cleanNoteBody(note?.body ?? '')}
-          editing={editingId === item.id}
-          penSet={settings.penSet}
-          noteFont={settings.noteFont}
-          onChange={(text) => setAnnotationText(item, text)}
-          onEditingChange={(on) => setEditing(item.id, on)}
-          onToggleTask={(index, done) => { if (note) toggleInlineTask(note.id, index, done) }}
-          onColor={() => cycleHighlightColor(item)}
-          onOpen={() => openAnnotationNote(item)}
-          onRemove={() => removeHighlight(item.id)}
-          onMove={(x, y) => moveStickyNote(item.id, x, y)}
-        />
-      })}
-
       {/* Dotted connectors: absolute in page space, full document height */}
       <svg
         className="dn-annotation-connectors"
         aria-hidden="true"
         style={{ height: Math.max(document.documentElement.scrollHeight, document.documentElement.clientHeight) }}
       >
-        {annotationPlacements.filter(({ side, item, note }) => item.display === 'sticky' || (side !== 'marker' && (note || editingId === item.id))).map(({ item, side, anchorX, anchorY, x, y }) => {
-          const isSticky = item.display === 'sticky'
-          const isRight = side === 'right' || (isSticky && (item.placement?.side ?? 'right') === 'right')
-          const endX = isRight ? x : x + (isSticky ? 260 : 230)
-          const endY = y + 26
+        {annotationPlacements.filter(({ item, note }) => note || editingId === item.id).map(({ item, anchorX, anchorY, x, y }) => {
+          const cardWidth = 240
+          const endX = x >= anchorX ? x : x + cardWidth
+          const endY = y + 16
           return (
             <g key={item.id}>
               <circle cx={anchorX} cy={anchorY} r="3" />
@@ -1878,12 +1843,11 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
         })}
       </svg>
 
-      {/* Margin notes */}
-      {annotationPlacements.filter(({ item, note }) => item.display !== 'sticky' && (note || editingId === item.id)).map(({ item, x, y, note }) => (
+      {/* Notes placed anywhere on the page */}
+      {annotationPlacements.filter(({ item, note }) => note || editingId === item.id).map(({ item, x, y, note }) => (
         <AnnotationCard
           key={item.id}
           item={item}
-          variant="margin"
           x={x}
           y={y}
           body={cleanNoteBody(note?.body ?? '')}
@@ -1896,6 +1860,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
           onColor={() => cycleHighlightColor(item)}
           onOpen={() => openAnnotationNote(item)}
           onRemove={() => removeHighlight(item.id)}
+          onMove={(newX, newY) => moveNote(item.id, newX, newY)}
         />
       ))}
     </div>

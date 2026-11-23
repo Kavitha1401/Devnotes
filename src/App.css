@@ -237,21 +237,14 @@ button { cursor: pointer; }
 .dn-panel.dn-dark .dn-library-toggle { color: #d5dfca; background: #30372e; border-color: #485143; }
 @media (max-width: 900px) { .dn-margin-card, .dn-annotation-connectors { display: none; } }
 
-/* Annotation cards (margin notes and stickies) */
-.dn-card { position: absolute; z-index: 2147483645; box-sizing: border-box; width: 230px; padding: 11px 13px 12px; font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; text-align: left; pointer-events: auto !important; }
+/* Annotation cards: placeable anywhere on the page */
+.dn-card { position: absolute; z-index: 2147483645; box-sizing: border-box; width: 240px; padding: 10px 12px 12px; font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; text-align: left; pointer-events: auto !important; background: #ffffff; border: 1px solid #e1e3da; border-left: 4px solid var(--accent, #5c7049); border-radius: 6px; color: #32352b; box-shadow: 0 3px 12px rgba(20, 24, 17, 0.09), 0 1px 3px rgba(20, 24, 17, 0.05); }
 .dn-card:focus-within { outline: 2px solid #5c7049; outline-offset: 2px; }
-
-/* 1. Margin Note: Crisp white book-marginalia card with color-coded left accent bar */
-.dn-card-margin { background: #ffffff; border: 1px solid #e1e3da; border-left: 4px solid var(--accent, #5c7049); border-radius: 6px; color: #32352b; box-shadow: 0 2px 10px rgba(20, 24, 17, 0.08), 0 1px 3px rgba(20, 24, 17, 0.05); }
-.dn-card-margin-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; }
+.dn-card-header { display: flex; align-items: center; justify-content: space-between; margin: -4px -6px 6px; padding: 4px 6px; cursor: grab; touch-action: none; user-select: none; border-radius: 4px 4px 0 0; }
+.dn-card-header:active { cursor: grabbing; background: rgba(0, 0, 0, 0.04); }
 .dn-card-badge { font: 700 8px/1 ui-sans-serif, system-ui, sans-serif; letter-spacing: 0.8px; color: #7c8869; text-transform: uppercase; }
-
-/* 2. Sticky Note: Authentic warm canary-yellow Post-It note with washi tape and grip header */
-.dn-card-sticky { width: 250px; padding: 22px 13px 13px; background: color-mix(in srgb, var(--accent, #fef08a) 38%, #fffce3); border: 1px solid #ddd28c; border-radius: 2px 2px 12px 2px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 12px 24px -2px rgba(45, 38, 18, 0.16); color: #383424; }
-.dn-card-grip { position: absolute; top: 0; left: 0; right: 0; height: 19px; display: flex; align-items: center; justify-content: center; cursor: grab; touch-action: none; background: rgba(0, 0, 0, 0.035); border-bottom: 1px solid rgba(215, 195, 110, 0.35); }
-.dn-card-grip:active { cursor: grabbing; }
-.dn-card-grip-label { font: 700 7px/1 ui-sans-serif, system-ui, sans-serif; letter-spacing: 0.9px; color: #8a7a40; user-select: none; }
-.dn-sticky-tape { position: absolute; top: -9px; left: 50%; transform: translateX(-50%); width: 52px; height: 17px; background: rgba(255, 252, 215, 0.88); border: 1px dashed rgba(200, 185, 120, 0.55); border-radius: 2px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08); pointer-events: none; }
+.dn-card-drag-hint { font: 600 9px/1 ui-sans-serif, system-ui, sans-serif; color: #9aa192; letter-spacing: 0.3px; display: flex; align-items: center; gap: 2px; }
+.dn-card-header:hover .dn-card-drag-hint { color: #5c7049; }
 
 .dn-card-input { display: block; width: 100%; min-height: 20px; margin: 0; padding: 0; border: 0; outline: 0; resize: none; overflow: hidden; color: inherit; background: transparent; font: inherit; }
 .dn-card-input::placeholder { color: #8a8d7e; }
@@ -272,4 +265,3 @@ button { cursor: pointer; }
 .dn-card.dn-font-serif { font-family: Georgia, "Times New Roman", serif; }
 .dn-card.dn-font-handwriting { font-family: "Segoe Print", "Bradley Hand", cursive; }
 .dn-card.dn-font-mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
-.dn-card-sticky, .dn-card-sticky.dn-font-handwriting { font-family: Georgia, "Times New Roman", serif; }
