@@ -490,7 +490,7 @@ function findNearestTextAnchor(clientX: number, clientY: number): { text: string
 
 // Older versions stored the highlighted text and a source link inside the note body.
 // Hide those lines so annotation notes only show what the user actually wrote.
-const LEGACY_LINE = /^\s*(>|Source:\s*\[|—\s*\[|Related link:)/
+const LEGACY_LINE = /^\s*(?:>\s|Source:|—\s*\[)/i
 
 function cleanNoteBody(body: string) {
   return body.split('\n').filter((line) => !LEGACY_LINE.test(line)).join('\n').replace(/\n{3,}/g, '\n\n')
@@ -1817,6 +1817,24 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
           }}
         >
           Note
+        </button>
+        <button
+          type="button"
+          title="Add a sticky note beside this passage"
+          onPointerDown={(event) => event.stopPropagation()}
+          onMouseDown={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+          }}
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            captureSelection('sticky')
+            window.getSelection()?.removeAllRanges()
+            setSelectionToolbar(null)
+          }}
+        >
+          Sticky
         </button>
         {selectionToolbar.highlightIds && selectionToolbar.highlightIds.length > 0 && (
           <>
