@@ -16,6 +16,7 @@ export type DevNotesSettings = {
   penSet: 'marker' | 'pencil' | 'fountain'
   paperTone: 'cream' | 'sepia' | 'grey' | 'night'
   noteFont: 'serif' | 'handwriting' | 'mono'
+  toolbarBehavior: 'always' | 'hold-alt' | 'never'
 }
 
 export const DEFAULT_SETTINGS: DevNotesSettings = {
@@ -33,6 +34,7 @@ export const DEFAULT_SETTINGS: DevNotesSettings = {
   penSet: 'marker',
   paperTone: 'cream',
   noteFont: 'serif',
+  toolbarBehavior: 'always',
 }
 
 export const DEFAULT_BLOCKED_HOSTS = [
@@ -50,12 +52,12 @@ export const DEFAULT_BLOCKED_HOSTS = [
 ]
 
 export function normalizeHost(host: string): string {
-  return host.trim().toLowerCase().replace(/^www\./, '')
+  return host.trim().toLowerCase().replace(/^\*\./, '').replace(/^www\./, '')
 }
 
 export function normalizeSettings(value: unknown): DevNotesSettings {
   const raw = typeof value === 'object' && value !== null ? value as Partial<DevNotesSettings> : {}
-  const strings = (items: unknown) => Array.isArray(items) ? items.filter((item): item is string => typeof item === 'string').map(normalizeHost).filter(Boolean) : []
+  const strings = (items: unknown) => Array.isArray(items) ? items.filter((item): item is string => typeof item === 'string').map((item) => item.trim().startsWith('*.') ? `*.${normalizeHost(item.slice(2))}` : normalizeHost(item)).filter(Boolean) : []
   return {
     ...DEFAULT_SETTINGS,
     disabledHosts: [...new Set(strings(raw.disabledHosts))],
@@ -72,12 +74,15 @@ export function normalizeSettings(value: unknown): DevNotesSettings {
     penSet: ['marker', 'pencil', 'fountain'].includes(raw.penSet as string) ? raw.penSet as DevNotesSettings['penSet'] : DEFAULT_SETTINGS.penSet,
     paperTone: ['cream', 'sepia', 'grey', 'night'].includes(raw.paperTone as string) ? raw.paperTone as DevNotesSettings['paperTone'] : DEFAULT_SETTINGS.paperTone,
     noteFont: ['serif', 'handwriting', 'mono'].includes(raw.noteFont as string) ? raw.noteFont as DevNotesSettings['noteFont'] : DEFAULT_SETTINGS.noteFont,
+    toolbarBehavior: ['always', 'hold-alt', 'never'].includes(raw.toolbarBehavior as string) ? raw.toolbarBehavior as DevNotesSettings['toolbarBehavior'] : DEFAULT_SETTINGS.toolbarBehavior,
   }
 }
 
 export function hostMatches(host: string, rule: string): boolean {
+  const wildcard = rule.trim().startsWith('*.')
   const normalizedHost = normalizeHost(host)
   const normalizedRule = normalizeHost(rule)
+  if (wildcard) return normalizedHost !== normalizedRule && normalizedHost.endsWith(`.${normalizedRule}`)
   return normalizedHost === normalizedRule || normalizedHost.endsWith(`.${normalizedRule}`)
 }
 
@@ -88,6 +93,7 @@ export function isHostDisabled(host: string, settings: DevNotesSettings): boolea
 
 export function readSettings(): Promise<DevNotesSettings> {
   return new Promise((resolve) => {
+    if (typeof chrome !== 'undefined' && chrome.extension?.inIncognitoContext) { resolve(DEFAULT_SETTINGS); return }
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {
       chrome.storage.local.get(SETTINGS_KEY, (result) => resolve(normalizeSettings(result[SETTINGS_KEY])))
       return
@@ -100,6 +106,7 @@ export function readSettings(): Promise<DevNotesSettings> {
 export function writeSettings(settings: DevNotesSettings): Promise<void> {
   const normalized = normalizeSettings(settings)
   return new Promise((resolve, reject) => {
+    if (typeof chrome !== 'undefined' && chrome.extension?.inIncognitoContext) { resolve(); return }
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {
       chrome.storage.local.set({ [SETTINGS_KEY]: normalized }, () => {
         const error = chrome.runtime.lastError

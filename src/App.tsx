@@ -22,6 +22,9 @@ const HIGHLIGHT_KEY = 'devnotes-highlights'
 const COLLECTION_KEY = 'devnotes-collections'
 const TRASH_KEY = 'devnotes-trash'
 const PAGEMETA_KEY = 'devnotes-pagemeta'
+const SCHEMA_VERSION_KEY = 'devnotes-schema-version'
+const CURRENT_SCHEMA_VERSION = 1
+const isIncognitoContext = () => typeof chrome !== 'undefined' && Boolean(chrome.extension?.inIncognitoContext)
 const NOTE_TEMPLATES = {
   'Bug report': '# Bug report\n\n## Summary\n\n## Steps to reproduce\n1. \n\n## Expected behavior\n\n## Actual behavior\n\n## Environment\n',
   'Meeting notes': '# Meeting notes\n\nDate: \nAttendees: \n\n## Agenda\n\n## Notes\n\n## Decisions\n\n## Action items\n- [ ] \n',
@@ -143,6 +146,7 @@ function safeHostname(url: string): string {
 
 function readDeletedNotes(): Promise<Record<string, number>> {
   return new Promise((resolve) => {
+    if (isIncognitoContext()) { resolve({}); return }
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {
       chrome.storage.local.get(DELETED_KEY, (result) => resolve((result[DELETED_KEY] as Record<string, number> | undefined) ?? {}))
       return
@@ -154,17 +158,32 @@ function readDeletedNotes(): Promise<Record<string, number>> {
 
 function readPages(): Promise<PageNotes> {
   return new Promise((resolve) => {
+    if (isIncognitoContext()) { resolve({}); return }
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {
-      chrome.storage.local.get(STORAGE_KEY, (result) => resolve(migratePages((result[STORAGE_KEY] as PageNotes | undefined) ?? {})))
+      chrome.storage.local.get([STORAGE_KEY, SCHEMA_VERSION_KEY], (result) => {
+        const migrated = migratePages((result[STORAGE_KEY] as PageNotes | undefined) ?? {})
+        if (Number(result[SCHEMA_VERSION_KEY] ?? 0) < CURRENT_SCHEMA_VERSION) {
+          try { chrome.storage.local.set({ [STORAGE_KEY]: migrated, [SCHEMA_VERSION_KEY]: CURRENT_SCHEMA_VERSION }) } catch { /* The panel remains usable in memory if storage is unavailable. */ }
+        }
+        resolve(migrated)
+      })
       return
     }
     if (typeof chrome !== 'undefined' && chrome.runtime) { resolve({}); return }
-    try { resolve(migratePages(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}'))) } catch { resolve({}) }
+    try {
+      const migrated = migratePages(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}'))
+      if (Number(localStorage.getItem(SCHEMA_VERSION_KEY) ?? 0) < CURRENT_SCHEMA_VERSION) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated))
+        localStorage.setItem(SCHEMA_VERSION_KEY, String(CURRENT_SCHEMA_VERSION))
+      }
+      resolve(migrated)
+    } catch { resolve({}) }
   })
 }
 
 function writePages(pages: PageNotes, deletedNotes: Record<string, number> = {}): Promise<void> {
   return new Promise((resolve, reject) => {
+    if (isIncognitoContext()) { resolve(); return }
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {
       chrome.storage.local.get([STORAGE_KEY, DELETED_KEY], (result) => {
         const current = migratePages((result[STORAGE_KEY] as PageNotes | undefined) ?? {})
@@ -172,7 +191,7 @@ function writePages(pages: PageNotes, deletedNotes: Record<string, number> = {})
         for (const notes of Object.values(pages)) for (const note of notes) if (note.updatedAt > (deleted[note.id] ?? 0)) delete deleted[note.id]
         deleted = pruneTombstones(deleted)
         const merged = removeDeletedPages(mergePages(current, pages), deleted)
-        chrome.storage.local.set({ [STORAGE_KEY]: merged, [DELETED_KEY]: deleted }, () => {
+        chrome.storage.local.set({ [STORAGE_KEY]: merged, [DELETED_KEY]: deleted, [SCHEMA_VERSION_KEY]: CURRENT_SCHEMA_VERSION }, () => {
           const error = chrome.runtime.lastError
           if (error) reject(new Error(error.message))
           else resolve()
@@ -188,6 +207,7 @@ function writePages(pages: PageNotes, deletedNotes: Record<string, number> = {})
       deleted = pruneTombstones(deleted)
       localStorage.setItem(STORAGE_KEY, JSON.stringify(removeDeletedPages(mergePages(current, pages), deleted)))
       localStorage.setItem(DELETED_KEY, JSON.stringify(deleted))
+      localStorage.setItem(SCHEMA_VERSION_KEY, String(CURRENT_SCHEMA_VERSION))
       resolve()
     } catch (error) {
       reject(error)
@@ -197,6 +217,7 @@ function writePages(pages: PageNotes, deletedNotes: Record<string, number> = {})
 
 function readHighlights(): Promise<Record<string, Highlight[]>> {
   return new Promise((resolve) => {
+    if (isIncognitoContext()) { resolve({}); return }
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {
       chrome.storage.local.get(HIGHLIGHT_KEY, (result) => resolve(normalizeHighlights(result[HIGHLIGHT_KEY])))
       return
@@ -208,6 +229,7 @@ function readHighlights(): Promise<Record<string, Highlight[]>> {
 
 function writeHighlights(highlights: Record<string, Highlight[]>): Promise<void> {
   return new Promise((resolve, reject) => {
+    if (isIncognitoContext()) { resolve(); return }
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {
       chrome.storage.local.set({ [HIGHLIGHT_KEY]: highlights }, () => {
         const error = chrome.runtime.lastError
@@ -253,6 +275,7 @@ function normalizeHighlights(value: unknown): Record<string, Highlight[]> {
 
 function readPageMeta(): Promise<Record<string, PageMeta>> {
   return new Promise((resolve) => {
+    if (isIncognitoContext()) { resolve({}); return }
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {
       chrome.storage.local.get(PAGEMETA_KEY, (result) => resolve((result[PAGEMETA_KEY] as Record<string, PageMeta> | undefined) ?? {}))
       return
@@ -264,6 +287,7 @@ function readPageMeta(): Promise<Record<string, PageMeta>> {
 
 function readCollections(): Promise<Collection[]> {
   return new Promise((resolve) => {
+    if (isIncognitoContext()) { resolve([]); return }
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {
       chrome.storage.local.get(COLLECTION_KEY, (result) => resolve((result[COLLECTION_KEY] as Collection[] | undefined) ?? []))
       return
@@ -275,6 +299,7 @@ function readCollections(): Promise<Collection[]> {
 
 function writeCollections(collections: Collection[]): Promise<void> {
   return new Promise((resolve, reject) => {
+    if (isIncognitoContext()) { resolve(); return }
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {
       chrome.storage.local.set({ [COLLECTION_KEY]: collections }, () => {
         const error = chrome.runtime.lastError
@@ -290,6 +315,7 @@ function writeCollections(collections: Collection[]): Promise<void> {
 
 function readTrash(): Promise<TrashEntry[]> {
   return new Promise((resolve) => {
+    if (isIncognitoContext()) { resolve([]); return }
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {
       chrome.storage.local.get(TRASH_KEY, (result) => resolve(boundedTrash((result[TRASH_KEY] as TrashEntry[] | undefined) ?? [], 3650)))
       return
@@ -301,6 +327,7 @@ function readTrash(): Promise<TrashEntry[]> {
 
 function writeTrash(trash: TrashEntry[], retentionDays = DEFAULT_SETTINGS.trashRetentionDays): Promise<void> {
   return new Promise((resolve, reject) => {
+    if (isIncognitoContext()) { resolve(); return }
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {
       chrome.storage.local.set({ [TRASH_KEY]: boundedTrash(trash, retentionDays) }, () => {
         const error = chrome.runtime.lastError
@@ -327,18 +354,45 @@ function boundedTrash(items: TrashEntry[], retentionDays = DEFAULT_SETTINGS.tras
   return valid.slice(-100)
 }
 
-function pageTextNodes(): Text[] {
-  if (!document.body) return []
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      const parent = node.parentElement
-      if (!node.textContent || parent?.closest('script, style, noscript, textarea, input, select, [contenteditable="true"], #devnotes-root')) return NodeFilter.FILTER_REJECT
-      return NodeFilter.FILTER_ACCEPT
-    },
-  })
+function pageTextNodes(searchRoot?: Node): Text[] {
   const nodes: Text[] = []
-  while (walker.nextNode()) nodes.push(walker.currentNode as Text)
+  const visit = (root: Node) => {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        if (node.nodeType === Node.TEXT_NODE) {
+          const parent = node.parentElement
+          if (!node.textContent || parent?.closest('script, style, noscript, textarea, input, select, [contenteditable]:not([contenteditable="false"]), #devnotes-root')) return NodeFilter.FILTER_REJECT
+          return NodeFilter.FILTER_ACCEPT
+        }
+        if (node instanceof HTMLElement && node.matches('script, style, noscript, textarea, input, select, [contenteditable]:not([contenteditable="false"]), #devnotes-root')) return NodeFilter.FILTER_REJECT
+        return NodeFilter.FILTER_ACCEPT
+      },
+    })
+    const shadowRoots: ShadowRoot[] = []
+    while (walker.nextNode()) {
+      const node = walker.currentNode
+      if (node.nodeType === Node.TEXT_NODE) nodes.push(node as Text)
+      else if (node instanceof HTMLElement && node.shadowRoot) shadowRoots.push(node.shadowRoot)
+    }
+    for (const shadowRoot of shadowRoots) visit(shadowRoot)
+  }
+  const base = searchRoot ?? document.body
+  if (base?.nodeType === Node.TEXT_NODE) nodes.push(base as Text)
+  else if (base) visit(base)
   return nodes
+}
+
+function findContentColumn() {
+  const candidates = Array.from(document.querySelectorAll<HTMLElement>('article, main, [role="main"], [itemprop="articleBody"], .markdown-body, #content, .content, .article, .post-content'))
+    .filter((element) => !element.closest('#devnotes-root') && (element.innerText?.length ?? 0) > 200)
+    .sort((a, b) => (b.innerText?.length ?? 0) - (a.innerText?.length ?? 0))
+  const fallback = Array.from(document.body?.children ?? [])
+    .filter((element): element is HTMLElement => element instanceof HTMLElement && !element.matches('nav, header, footer, aside, #devnotes-root') && (element.innerText?.length ?? 0) > 200)
+    .sort((a, b) => (b.innerText?.length ?? 0) - (a.innerText?.length ?? 0))[0]
+  const candidate = candidates[0] ?? fallback
+  if (!candidate) return null
+  const rect = candidate.getBoundingClientRect()
+  return { left: rect.left, right: rect.right }
 }
 
 function compareDomPoints(leftNode: Node, leftOffset: number, rightNode: Node, rightOffset: number): number {
@@ -391,29 +445,99 @@ function wrapTextOffsets(nodes: Text[], start: number, end: number, id: string, 
   }
 }
 
-function applyHighlights(highlights: Highlight[]): string[] {
+function editDistanceWithin(left: string, right: string, limit: number) {
+  if (Math.abs(left.length - right.length) > limit) return limit + 1
+  let previous = Array.from({ length: right.length + 1 }, (_, index) => index)
+  for (let row = 1; row <= left.length; row++) {
+    const current = [row]
+    let min = row
+    for (let col = 1; col <= right.length; col++) {
+      const value = Math.min(current[col - 1] + 1, previous[col] + 1, previous[col - 1] + (left[row - 1] === right[col - 1] ? 0 : 1))
+      current[col] = value
+      min = Math.min(min, value)
+    }
+    if (min > limit) return limit + 1
+    previous = current
+  }
+  return previous[right.length]
+}
+
+function findBestAnchor(pageText: string, item: Pick<Highlight, 'text' | 'prefix' | 'suffix'>) {
+  const scoreContext = (index: number) => {
+    const before = pageText.slice(Math.max(0, index - item.prefix.length), index)
+    const after = pageText.slice(index + item.text.length, index + item.text.length + item.suffix.length)
+    let prefixScore = 0
+    while (prefixScore < before.length && prefixScore < item.prefix.length && before[before.length - 1 - prefixScore] === item.prefix[item.prefix.length - 1 - prefixScore]) prefixScore++
+    let suffixScore = 0
+    while (suffixScore < after.length && suffixScore < item.suffix.length && after[suffixScore] === item.suffix[suffixScore]) suffixScore++
+    return prefixScore + suffixScore
+  }
+  let best = -1
+  let bestScore = -1
+  let index = pageText.indexOf(item.text)
+  while (index >= 0) {
+    const score = scoreContext(index)
+    if (score > bestScore) { best = index; bestScore = score }
+    index = pageText.indexOf(item.text, index + 1)
+  }
+  if (best >= 0 || item.text.length > 1000) return best
+
+  const tolerance = Math.max(2, Math.floor(item.text.length * 0.08))
+  const sampleSize = Math.min(18, item.text.length)
+  const candidates = new Set<number>()
+  for (const sampleStart of [0, Math.floor((item.text.length - sampleSize) / 2), item.text.length - sampleSize]) {
+    const sample = item.text.slice(sampleStart, sampleStart + sampleSize)
+    let found = pageText.indexOf(sample)
+    let count = 0
+    while (found >= 0 && count++ < 40) {
+      const candidate = found - sampleStart
+      if (candidate >= 0 && candidate + item.text.length <= pageText.length) candidates.add(candidate)
+      found = pageText.indexOf(sample, found + 1)
+    }
+  }
+  let bestDistance = tolerance + 1
+  for (const candidate of candidates) {
+    const distance = editDistanceWithin(item.text, pageText.slice(candidate, candidate + item.text.length), tolerance)
+    if (distance > tolerance) continue
+    const score = scoreContext(candidate) - distance * 2
+    if (score > bestScore || (score === bestScore && distance < bestDistance)) {
+      best = candidate
+      bestScore = score
+      bestDistance = distance
+    }
+  }
+  return best
+}
+
+function applyHighlights(highlights: Highlight[], clearExisting = true): string[] {
   if (!document.body) return []
-  clearPageHighlights()
+  if (clearExisting) clearPageHighlights()
   const orphaned: string[] = []
   for (const item of highlights) {
     if (!item.text) continue
     const nodes = pageTextNodes()
     const text = nodes.map((node) => node.textContent ?? '').join('')
-    let index = text.indexOf(item.text)
-    while (index >= 0) {
-      const before = text.slice(Math.max(0, index - item.prefix.length), index)
-      const after = text.slice(index + item.text.length, index + item.text.length + item.suffix.length)
-      if ((!item.prefix || before.endsWith(item.prefix)) && (!item.suffix || after.startsWith(item.suffix))) break
-      index = text.indexOf(item.text, index + 1)
-    }
+    const index = findBestAnchor(text, item)
     if (index >= 0) wrapTextOffsets(nodes, index, index + item.text.length, item.id, item.color, item.shape)
     else orphaned.push(item.id)
   }
   return orphaned
 }
 
+function highlightElements(id?: string): HTMLElement[] {
+  const elements: HTMLElement[] = []
+  const visit = (root: ParentNode) => {
+    root.querySelectorAll<HTMLElement>('[data-devnotes-highlight]').forEach((mark) => {
+      if (!id || mark.dataset.devnotesHighlight === id) elements.push(mark)
+    })
+    root.querySelectorAll<HTMLElement>('*').forEach((element) => { if (element.shadowRoot) visit(element.shadowRoot) })
+  }
+  visit(document)
+  return elements
+}
+
 function clearPageHighlights() {
-  document.querySelectorAll<HTMLElement>('[data-devnotes-highlight]').forEach((mark) => mark.replaceWith(...Array.from(mark.childNodes)))
+  highlightElements().forEach((mark) => mark.replaceWith(...Array.from(mark.childNodes)))
 }
 
 function renderNoteMarkdown(source: string): string {
@@ -483,8 +607,8 @@ function findNearestTextAnchor(clientX: number, clientY: number): { text: string
   if (!text) return null
   start += pageText.slice(start, end).length - pageText.slice(start, end).trimStart().length
   end = start + text.length
-  const prefix = pageText.slice(Math.max(0, start - 24), start)
-  const suffix = pageText.slice(end, Math.min(pageText.length, end + 24))
+  const prefix = pageText.slice(Math.max(0, start - 80), start)
+  const suffix = pageText.slice(end, Math.min(pageText.length, end + 80))
   return { text, prefix, suffix, start, end }
 }
 
@@ -724,9 +848,14 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   const [allPageMeta, setAllPageMeta] = useState<Record<string, PageMeta>>({})
   const [highlights, setHighlights] = useState<Highlight[]>([])
   const [selectionToolbar, setSelectionToolbar] = useState<{ x: number; y: number; highlightIds?: string[] } | null>(null)
+  const [runtimeInvalid, setRuntimeInvalid] = useState(false)
+  const [incognitoMode] = useState(() => isIncognitoContext())
+  const [toolbarAltHeld, setToolbarAltHeld] = useState(false)
+  const captureSelectionRef = useRef<(action?: 'highlight' | 'note' | 'sticky', color?: string) => boolean>(() => false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [annotationLayoutTick, setAnnotationLayoutTick] = useState(0)
   const [orphanedHighlights, setOrphanedHighlights] = useState<string[]>([])
+  const [annotationUndo, setAnnotationUndo] = useState<{ item: Highlight; note?: Note; url: string } | null>(null)
   const [highlightsForUrl, setHighlightsForUrl] = useState('')
   const highlightsRef = useRef(highlights)
   const [showAllNotes, setShowAllNotes] = useState(false)
@@ -741,6 +870,8 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   const [dateTo, setDateTo] = useState('')
   const [collectionFilter, setCollectionFilter] = useState('')
   const [bulkSelection, setBulkSelection] = useState<string[]>([])
+  const [bulkTagEditing, setBulkTagEditing] = useState(false)
+  const [bulkTagDraft, setBulkTagDraft] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedPageUrl, setSelectedPageUrl] = useState(pageUrl)
   const [ready, setReady] = useState(false)
@@ -768,6 +899,24 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   useEffect(() => { highlightsRef.current = highlights }, [highlights])
 
   useEffect(() => {
+    const stopSiteHotkeys = (event: Event) => {
+      const target = event.target
+      if (!(target instanceof Element)) return
+      if (target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], .CodeMirror, .monaco-editor, .cm-editor')) event.stopPropagation()
+    }
+    for (const type of ['keydown', 'keyup', 'keypress']) messageTarget.addEventListener(type, stopSiteHotkeys, true)
+    return () => { for (const type of ['keydown', 'keyup', 'keypress']) messageTarget.removeEventListener(type, stopSiteHotkeys, true) }
+  }, [messageTarget])
+
+  useEffect(() => {
+    if (typeof chrome === 'undefined') return
+    const checkContext = () => setRuntimeInvalid(!chrome.runtime?.id)
+    checkContext()
+    const timer = window.setInterval(checkContext, 1000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
     let active = true
     void Promise.all([readPages(), readDeletedNotes()]).then(([saved, deleted]) => {
       if (!active) return
@@ -776,6 +925,11 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       setPages(visiblePages)
       setSelectedId(visiblePages[initialPageUrlRef.current]?.[0]?.id ?? null)
       setReady(true)
+    }).catch(() => {
+      if (!active) return
+      setRuntimeInvalid(true)
+      setReady(true)
+      setImportError('DevNotes could not read local storage. Your edits will stay in memory until you copy them.')
     })
     void readCollections().then((saved) => { if (active) { setCollections(saved); setCollectionsReady(true) } })
     void readSettings().then((saved) => {
@@ -819,7 +973,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       if (!settingsDirtyRef.current) return
       void writeSettings(settings).then(() => {
         if (version === settingsVersionRef.current) settingsDirtyRef.current = false
-      }, () => setSaveState('error'))
+      }, () => { setSaveState('error'); setRuntimeInvalid(true) })
     }, 250)
     return () => window.clearTimeout(timer)
   }, [settings, settingsReady])
@@ -857,14 +1011,30 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       if (isApplying || !active) return
       isApplying = true
       observer?.disconnect()
-      try {
-        setOrphanedHighlights(applyHighlights(items))
-      } finally {
+      clearPageHighlights()
+      const orphaned: string[] = []
+      let offset = 0
+      const idleWindow = window as Window & { requestIdleCallback?: (callback: (deadline: { timeRemaining: () => number }) => void, options?: { timeout: number }) => number }
+      const processChunk = () => {
+        if (!active) return
+        const chunk = items.slice(offset, offset + 12)
+        offset += chunk.length
+        orphaned.push(...applyHighlights(chunk, false))
+        if (offset < items.length) {
+          if (idleWindow.requestIdleCallback) idleWindow.requestIdleCallback(processChunk, { timeout: 120 })
+          else window.setTimeout(processChunk, 16)
+          return
+        }
+        setOrphanedHighlights(orphaned)
         isApplying = false
-        if (active && document.body) {
-          observer?.observe(document.body, { childList: true, subtree: true })
+        if (active && document.body && observer) {
+          observer.observe(document.body, { childList: true, subtree: true, characterData: true })
+          document.querySelectorAll<HTMLElement>('*').forEach((element) => {
+            if (element.shadowRoot) observer?.observe(element.shadowRoot, { childList: true, subtree: true, characterData: true })
+          })
         }
       }
+      processChunk()
     }
 
     clearPageHighlights()
@@ -877,25 +1047,60 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       observer = new MutationObserver((mutations) => {
         if (isApplying) return
         const isDevNotesNode = (node: Node) => {
-          if (node instanceof HTMLElement) {
-            return node.hasAttribute('data-devnotes-highlight') || node.id === 'devnotes-root' || Boolean(node.closest?.('#devnotes-root'))
-          }
-          return false
+          const element = node instanceof HTMLElement ? node : node.parentElement
+          return Boolean(element && (element.hasAttribute('data-devnotes-highlight') || element.closest('#devnotes-root')))
         }
-        const hasExternalChanges = mutations.some((m) =>
-          Array.from(m.addedNodes).some((n) => !isDevNotesNode(n)) ||
-          Array.from(m.removedNodes).some((n) => !isDevNotesNode(n))
-        )
-        const marksCount = document.querySelectorAll('[data-devnotes-highlight]').length
-        const expectedCount = highlightsRef.current.filter((h) => h.text).length
-        if (marksCount === expectedCount) return
-        if (!hasExternalChanges) return
+        const changedRoots = mutations.flatMap((mutation) => [
+          ...Array.from(mutation.addedNodes).filter((node) => !isDevNotesNode(node)),
+          ...(mutation.type === 'characterData' && !isDevNotesNode(mutation.target) ? [mutation.target.parentNode ?? mutation.target] : []),
+        ])
+        const present = new Set(highlightElements().map((mark) => mark.dataset.devnotesHighlight))
+        const missing = highlightsRef.current.filter((item) => item.text && !present.has(item.id))
+        if (!missing.length) return
 
         window.clearTimeout(restoreTimer)
-        restoreTimer = window.setTimeout(() => runApplyHighlights(highlightsRef.current), 300)
+        restoreTimer = window.setTimeout(() => {
+          if (!changedRoots.length) {
+            setOrphanedHighlights((current) => [...new Set([...current, ...missing.map((item) => item.id)])])
+            return
+          }
+          const idleWindow = window as Window & { requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number }
+          const processChangedSubtrees = () => {
+            const addedTextNodes = changedRoots.flatMap((root) => root.isConnected ? pageTextNodes(root) : [])
+            const changedText = addedTextNodes.map((node) => node.textContent ?? '').join('')
+            let offset = 0
+            const processChunk = () => {
+              const chunk = missing.slice(offset, offset + 12)
+              offset += chunk.length
+              const reanchored: string[] = []
+              const orphaned: string[] = []
+              for (const item of chunk) {
+                const index = findBestAnchor(changedText, item)
+                if (index < 0) { orphaned.push(item.id); continue }
+                wrapTextOffsets(addedTextNodes, index, index + item.text.length, item.id, item.color, item.shape)
+                reanchored.push(item.id)
+              }
+              setOrphanedHighlights((current) => [...new Set([...current.filter((id) => !reanchored.includes(id)), ...orphaned])])
+              if (offset < missing.length) {
+                if (idleWindow.requestIdleCallback) idleWindow.requestIdleCallback(processChunk, { timeout: 200 })
+                else window.setTimeout(processChunk, 16)
+                return
+              }
+              document.querySelectorAll<HTMLElement>('*').forEach((element) => {
+                if (element.shadowRoot) observer?.observe(element.shadowRoot, { childList: true, subtree: true, characterData: true })
+              })
+            }
+            processChunk()
+          }
+          if (idleWindow.requestIdleCallback) idleWindow.requestIdleCallback(processChangedSubtrees, { timeout: 200 })
+          else window.setTimeout(processChangedSubtrees, 16)
+        }, 120)
       })
       if (document.body) {
-        observer.observe(document.body, { childList: true, subtree: true })
+        observer.observe(document.body, { childList: true, subtree: true, characterData: true })
+        document.querySelectorAll<HTMLElement>('*').forEach((element) => {
+          if (element.shadowRoot) observer?.observe(element.shadowRoot, { childList: true, subtree: true, characterData: true })
+        })
       }
     })
     return () => { active = false; observer?.disconnect(); window.clearTimeout(restoreTimer) }
@@ -904,7 +1109,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   useEffect(() => {
     if (!collectionsReady || !collectionsDirtyRef.current) return
     collectionsDirtyRef.current = false
-    const timer = window.setTimeout(() => { void writeCollections(collections) }, 350)
+    const timer = window.setTimeout(() => { void writeCollections(collections).catch(() => { setSaveState('error'); setRuntimeInvalid(true) }) }, 350)
     return () => window.clearTimeout(timer)
   }, [collections, collectionsReady])
 
@@ -916,7 +1121,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
         if (highlights.length) saved[pageUrl] = highlights
         else delete saved[pageUrl]
         return writeHighlights(saved)
-      })
+      }).catch(() => { setSaveState('error'); setRuntimeInvalid(true) })
     }, 350)
     return () => window.clearTimeout(timer)
   }, [highlights, ready, pageUrl, highlightsForUrl])
@@ -933,7 +1138,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       if (target?.id === 'devnotes-root' || target?.closest('#devnotes-root')) {
         return
       }
-      const mark = target?.closest<HTMLElement>('[data-devnotes-highlight]')
+      const mark = event.composedPath().find((entry): entry is HTMLElement => entry instanceof HTMLElement && entry.hasAttribute('data-devnotes-highlight'))
       if (!mark) return
       const id = mark.dataset.devnotesHighlight
       if (!id) return
@@ -974,7 +1179,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     const timer = window.setTimeout(() => {
       void writePages(pages, deletedNotes).then(
         () => { if (version === pagesVersionRef.current) { pagesDirtyRef.current = false; setSaveState('saved') } },
-        () => { if (version === pagesVersionRef.current) setSaveState('error') },
+        () => { if (version === pagesVersionRef.current) { setSaveState('error'); setRuntimeInvalid(true) } },
       )
     }, 350)
     return () => window.clearTimeout(timer)
@@ -1024,7 +1229,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       }
       if (changed) void writeHighlights(allHighlights)
       if (selectedPageUrl === pageUrl) {
-        document.querySelectorAll<HTMLElement>(`[data-devnotes-highlight]`).forEach((mark) => {
+        highlightElements().forEach((mark) => {
           if (highlights.find((item) => item.noteId === deletedNoteId)?.id === mark.dataset.devnotesHighlight) mark.replaceWith(...Array.from(mark.childNodes))
         })
         setHighlights((items) => items.filter((item) => item.noteId !== deletedNoteId))
@@ -1098,12 +1303,27 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   }
 
   useEffect(() => {
-    const updateSelection = () => {
+    let frame = 0
+    const scheduleLayout = () => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => setAnnotationLayoutTick((tick) => tick + 1))
+    }
+    const updateSelection = (altKey = false) => {
       const selection = window.getSelection()
       if (!selection || selection.isCollapsed || !selection.toString().trim() || !selection.rangeCount) {
+        setSelectionToolbar(null)
         return
       }
       const range = selection.getRangeAt(0)
+      const ancestor = range.commonAncestorContainer instanceof Element ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement
+      if (ancestor?.closest('input, textarea, [contenteditable]:not([contenteditable="false"]), [role="textbox"], pre, code, .CodeMirror, .monaco-editor, .cm-editor')) {
+        setSelectionToolbar(null)
+        return
+      }
+      if (settings.toolbarBehavior === 'never' || (settings.toolbarBehavior === 'hold-alt' && !altKey)) {
+        setSelectionToolbar(null)
+        return
+      }
       const rect = range.getBoundingClientRect()
       if (!rect.width && !rect.height) return
 
@@ -1113,7 +1333,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       const endMark = range.endContainer.parentElement?.closest<HTMLElement>('[data-devnotes-highlight]')
       if (endMark?.dataset.devnotesHighlight) ids.add(endMark.dataset.devnotesHighlight)
 
-      document.querySelectorAll<HTMLElement>('[data-devnotes-highlight]').forEach((m) => {
+      highlightElements().forEach((m) => {
         try {
           if (range.intersectsNode(m) && m.dataset.devnotesHighlight) {
             ids.add(m.dataset.devnotesHighlight)
@@ -1130,12 +1350,14 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       })
     }
 
-    const onPointerDown = (event: MouseEvent) => {
+    const onPointerDown = (event: PointerEvent) => {
       const target = event.target as HTMLElement | null
+      const path = event.composedPath()
       if (
+        path.some((entry) => entry instanceof HTMLElement && entry.id === 'devnotes-root') ||
         target?.id === 'devnotes-root' ||
         target?.closest('#devnotes-root') ||
-        target?.closest('[data-devnotes-highlight]') ||
+        path.some((entry) => entry instanceof HTMLElement && entry.hasAttribute('data-devnotes-highlight')) ||
         target?.closest('.dn-selection-toolbar')
       ) {
         return
@@ -1143,21 +1365,44 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       setSelectionToolbar(null)
     }
 
-    const onScroll = () => {
-      if (window.getSelection()?.isCollapsed) {
-        setSelectionToolbar(null)
+    const onMouseUp = (event: MouseEvent) => updateSelection(event.altKey)
+    const onKeyUp = (event: KeyboardEvent) => updateSelection(event.altKey)
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.altKey) setToolbarAltHeld(true)
+      if (event.key === 'Escape') setSelectionToolbar(null)
+      const typing = event.composedPath().some((entry) => entry instanceof HTMLElement && entry.matches('input, textarea, [contenteditable]:not([contenteditable="false"]), [role="textbox"], .CodeMirror, .monaco-editor, .cm-editor'))
+      if (!typing && event.altKey && event.shiftKey && (event.key.toLowerCase() === 'h' || event.key.toLowerCase() === 'm')) {
+        const selection = window.getSelection()
+        if (selection && !selection.isCollapsed && selection.toString().trim()) {
+          event.preventDefault()
+          captureSelectionRef.current(event.key.toLowerCase() === 'h' ? 'highlight' : 'note')
+          selection.removeAllRanges()
+          setSelectionToolbar(null)
+        }
       }
     }
-
-    document.addEventListener('selectionchange', updateSelection)
-    document.addEventListener('pointerdown', onPointerDown)
-    window.addEventListener('scroll', onScroll, { passive: true })
-    return () => {
-      document.removeEventListener('selectionchange', updateSelection)
-      document.removeEventListener('pointerdown', onPointerDown)
-      window.removeEventListener('scroll', onScroll)
+    const onKeyRelease = (event: KeyboardEvent) => { if (event.key === 'Alt') setToolbarAltHeld(false); onKeyUp(event) }
+    const onScroll = () => {
+      scheduleLayout()
+      const selection = window.getSelection()
+      if (selection && !selection.isCollapsed) updateSelection(toolbarAltHeld)
+      else setSelectionToolbar(null)
     }
-  }, [])
+
+    document.addEventListener('mouseup', onMouseUp)
+    document.addEventListener('keydown', onKeyDown, true)
+    document.addEventListener('keyup', onKeyRelease)
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('scroll', onScroll, { passive: true, capture: true })
+    return () => {
+      cancelAnimationFrame(frame)
+      document.removeEventListener('mouseup', onMouseUp)
+      document.removeEventListener('keydown', onKeyDown, true)
+      document.removeEventListener('keyup', onKeyRelease)
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('scroll', onScroll, true)
+    }
+  }, [settings.toolbarBehavior, toolbarAltHeld])
 
   useEffect(() => {
     let frame = 0
@@ -1230,10 +1475,11 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   }
 
   const applyBulkTags = () => {
-    const input = window.prompt('Tags to add (comma separated):')
-    if (input === null) return
-    const additions = input.split(',').map((tag) => tag.trim()).filter(Boolean)
+    const additions = bulkTagDraft.split(',').map((tag) => tag.trim()).filter(Boolean)
+    if (!additions.length) return
     bulkUpdate((note) => ({ ...note, tags: [...new Map([...(note.tags ?? []), ...additions].map((tag) => [tag.toLowerCase(), tag])).values()] }))
+    setBulkTagDraft('')
+    setBulkTagEditing(false)
   }
 
   const createFromTemplate = (template: keyof typeof NOTE_TEMPLATES) => {
@@ -1269,13 +1515,15 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   }
 
   const addBlockedHost = (host: string) => {
-    const normalized = normalizeHost(host)
-    try { if (new URL(`https://${normalized}`).hostname !== normalized) return } catch { return }
+    const wildcard = host.trim().startsWith('*.')
+    const base = normalizeHost(wildcard ? host.trim().slice(2) : host)
+    try { if (new URL(`https://${base}`).hostname !== base) return } catch { return }
+    const normalized = `${wildcard ? '*.' : ''}${base}`
     updateSettings({ disabledHosts: [...settings.disabledHosts, normalized], enabledHosts: settings.enabledHosts.filter((item) => item !== normalized) })
   }
 
   const allowHost = (host: string) => {
-    const normalized = normalizeHost(host)
+    const normalized = `${host.trim().startsWith('*.') ? '*.' : ''}${normalizeHost(host.trim().replace(/^\*\./, ''))}`
     updateSettings({ enabledHosts: [...settings.enabledHosts, normalized], disabledHosts: settings.disabledHosts.filter((item) => item !== normalized) })
   }
 
@@ -1291,13 +1539,13 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
 
   const changeHighlightColor = (id: string, color: string) => {
     highlightsDirtyRef.current = true
-    document.querySelectorAll<HTMLElement>(`[data-devnotes-highlight="${CSS.escape(id)}"]`).forEach((mark) => { mark.style.cssText = `${highlightStyle(highlights.find((item) => item.id === id)?.shape, color)} color:inherit;` })
+    highlightElements(id).forEach((mark) => { mark.style.cssText = `${highlightStyle(highlights.find((item) => item.id === id)?.shape, color)} color:inherit;` })
     setHighlights((items) => items.map((item) => item.id === id ? { ...item, color } : item))
   }
 
   const moveNote = (id: string, droppedPageX: number, droppedPageY: number) => {
     highlightsDirtyRef.current = true
-    const mark = document.querySelector<HTMLElement>(`[data-devnotes-highlight="${CSS.escape(id)}"]`)
+    const mark = highlightElements(id)[0]
     const scrollX = window.pageXOffset ?? window.scrollX ?? 0
     const scrollY = window.pageYOffset ?? window.scrollY ?? 0
     let dx = 24
@@ -1371,7 +1619,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   const reattachHighlight = (highlightId: string) => {
     const selection = window.getSelection()
     if (!selection || selection.isCollapsed || !selection.toString().trim() || !selection.rangeCount) {
-      window.alert('Select the text passage in the page first, then click Reattach.')
+      setImportError('Select the replacement passage on the page, then choose Reattach again.')
       return
     }
     const range = selection.getRangeAt(0)
@@ -1384,8 +1632,8 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     if (!text) return
     start += selectedText.length - selectedText.trimStart().length
     end = start + text.length
-    const prefix = pageText.slice(Math.max(0, start - 24), start)
-    const suffix = pageText.slice(end, Math.min(pageText.length, end + 24))
+    const prefix = pageText.slice(Math.max(0, start - 80), start)
+    const suffix = pageText.slice(end, Math.min(pageText.length, end + 80))
 
     const updated = highlights.map((item) => {
       if (item.id !== highlightId) return item
@@ -1410,7 +1658,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
 
   const deleteAnnotationCard = (id: string) => {
     highlightsDirtyRef.current = true
-    document.querySelectorAll<HTMLElement>(`[data-devnotes-highlight="${CSS.escape(id)}"]`).forEach((mark) => {
+    highlightElements(id).forEach((mark) => {
       const parent = mark.parentNode
       if (!parent) return
       while (mark.firstChild) {
@@ -1420,9 +1668,13 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       parent.normalize()
     })
     const target = highlights.find((item) => item.id === id)
+    let deletedNote: Note | undefined
+    let deletedUrl = pageUrl
     if (target?.noteId) {
       const noteUrl = allNotes.find(({ note }) => note.id === target.noteId)?.url ?? pageUrl
       const noteObj = (pages[noteUrl] ?? []).find((note) => note.id === target.noteId)
+      deletedNote = noteObj
+      deletedUrl = noteUrl
       if (noteObj) {
         const nextTrash = boundedTrash([...trash, { note: noteObj, url: noteUrl, deletedAt: Date.now() }], settings.trashRetentionDays)
         setTrash(nextTrash)
@@ -1433,9 +1685,26 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
         [noteUrl]: (pages[noteUrl] ?? []).filter((note) => note.id !== target.noteId),
       })
     }
+    if (target) setAnnotationUndo({ item: target, note: deletedNote, url: deletedUrl })
     setHighlights((items) => items.filter((item) => item.id !== id))
     setEditingId((current) => current === id ? null : current)
     setAnnotationLayoutTick((t) => t + 1)
+  }
+
+  const undoAnnotationDelete = () => {
+    if (!annotationUndo) return
+    const nextHighlights = [...highlights.filter((item) => item.id !== annotationUndo.item.id), annotationUndo.item]
+    highlightsDirtyRef.current = true
+    setHighlights(nextHighlights)
+    setOrphanedHighlights(applyHighlights(nextHighlights))
+    if (annotationUndo.note) {
+      const restoredNote = { ...annotationUndo.note, updatedAt: Date.now() }
+      persist({ ...pages, [annotationUndo.url]: [restoredNote, ...(pages[annotationUndo.url] ?? []).filter((note) => note.id !== restoredNote.id)] })
+      const nextTrash = trash.filter((entry) => entry.note.id !== annotationUndo.note?.id)
+      setTrash(nextTrash)
+      void writeTrash(nextTrash, settings.trashRetentionDays)
+    }
+    setAnnotationUndo(null)
   }
 
   const removeHighlight = (id: string) => {
@@ -1445,7 +1714,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     // If this highlight has a note, ONLY remove the highlight color/shape from the text; NEVER delete the note!
     if (target.noteId && (target.color !== 'transparent' || target.shape !== 'none')) {
       highlightsDirtyRef.current = true
-      document.querySelectorAll<HTMLElement>(`[data-devnotes-highlight="${CSS.escape(id)}"]`).forEach((mark) => {
+      highlightElements(id).forEach((mark) => {
         mark.style.cssText = `${highlightStyle('none', 'transparent')} color:inherit;`
       })
       setHighlights((items) => items.map((item) => item.id === id ? { ...item, color: 'transparent', shape: 'none' } : item))
@@ -1511,8 +1780,10 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       pagesDirtyRef.current = false
       collectionsDirtyRef.current = false
       highlightsDirtyRef.current = false
-      if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+      if (typeof chrome !== 'undefined' && chrome.storage?.local && !isIncognitoContext()) {
         await new Promise<void>((resolve, reject) => chrome.storage.local.set({ [STORAGE_KEY]: importedPages, [DELETED_KEY]: {}, [COLLECTION_KEY]: importedCollections, [TRASH_KEY]: importedTrash, [HIGHLIGHT_KEY]: importedHighlights, [SETTINGS_KEY]: importedSettings, [PAGEMETA_KEY]: importedPageMeta }, () => chrome.runtime.lastError ? reject(new Error(chrome.runtime.lastError.message)) : resolve()))
+      } else if (isIncognitoContext()) {
+        // The imported data stays in this panel's in-memory state only.
       } else if (typeof chrome !== 'undefined' && chrome.runtime) {
         throw new Error('Chrome storage is unavailable.')
       } else {
@@ -1548,8 +1819,8 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       if (text) {
         start += selectedText.length - selectedText.trimStart().length
         end = start + text.length
-        prefix = pageText.slice(Math.max(0, start - 24), start)
-        suffix = pageText.slice(end, Math.min(pageText.length, end + 24))
+        prefix = pageText.slice(Math.max(0, start - 80), start)
+        suffix = pageText.slice(end, Math.min(pageText.length, end + 80))
       }
     }
 
@@ -1565,7 +1836,11 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       }
     }
 
-    if (!text) { createNote(); return false }
+    if (!text) {
+      setImportError("This page doesn't expose selectable text. You can still write a page note from the panel.")
+      if (action !== 'highlight') createNote()
+      return false
+    }
 
     const item: Highlight = {
       id: crypto.randomUUID(),
@@ -1587,6 +1862,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     if (action !== 'highlight') setEditingId(item.id)
     return true
   }, [createNote, highlights, settings.highlightColor, settings.highlightStyle])
+  useEffect(() => { captureSelectionRef.current = captureSelection }, [captureSelection])
 
   const clipArticle = () => {
     const candidates = Array.from(document.querySelectorAll<HTMLElement>('article, main, [role="main"]'))
@@ -1622,6 +1898,12 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     const scrollX = window.pageXOffset ?? window.scrollX ?? 0
     const scrollY = window.pageYOffset ?? window.scrollY ?? 0
     const pageWidth = document.documentElement.clientWidth || window.innerWidth
+    const contentColumn = findContentColumn()
+    const columnLeft = contentColumn ? contentColumn.left + scrollX : 0
+    const columnRight = contentColumn ? contentColumn.right + scrollX : pageWidth
+    const panelWidth = open ? Math.min(settings.panelWidth, pageWidth) : 0
+    const visibleLeft = open && settings.panelSide === 'left' ? panelWidth : 0
+    const visibleRight = open && settings.panelSide === 'right' ? pageWidth - panelWidth : pageWidth
 
     type AttachedItem = {
       item: Highlight
@@ -1633,7 +1915,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     const attached: AttachedItem[] = []
     for (let index = 0; index < highlights.length; index++) {
       const item = highlights[index]
-      const mark = document.querySelector<HTMLElement>(`[data-devnotes-highlight="${CSS.escape(item.id)}"]`)
+      const mark = highlightElements(item.id)[0]
       if (!mark) continue
       const r = mark.getBoundingClientRect()
       attached.push({
@@ -1661,41 +1943,22 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     for (const entry of attached) {
       const { item, index, rect, note } = entry
       const anchorCenterY = rect.top + rect.height / 2
+      const rightSpace = visibleRight + scrollX - columnRight
+      const leftSpace = columnLeft - (visibleLeft + scrollX)
 
       // If user manually placed the note anywhere on the page:
       if (item.placement?.manual && typeof item.placement.dx === 'number' && typeof item.placement.dy === 'number') {
-        const x = rect.left + item.placement.dx
         const y = rect.top + item.placement.dy
-        const isRight = x >= rect.left
+        const preferred = item.placement.side === 'left' ? 'left' : 'right'
+        const side = preferred === 'right' && rightSpace >= 260 ? 'right' : preferred === 'left' && leftSpace >= 260 ? 'left' : rightSpace >= 260 ? 'right' : leftSpace >= 260 ? 'left' : 'marker'
+        const x = side === 'left' ? columnLeft - 260 : side === 'right' ? columnRight + 10 : rect.right + scrollX
         placements.push({
           item,
           index,
-          side: isRight ? 'right' : 'left',
+          side,
           x,
           y,
-          anchorX: isRight ? rect.right : rect.left,
-          anchorY: anchorCenterY,
-          rect,
-          note,
-        })
-        continue
-      }
-
-      // Legacy sticky placement support
-      if (item.display === 'sticky' && typeof item.placement?.dx === 'number' && typeof item.placement?.dy === 'number') {
-        const side = item.placement.side ?? 'right'
-        const dx = item.placement.dx ?? 24
-        const dy = item.placement.dy ?? -10
-        const width = 240
-        const x = side === 'left' ? Math.max(12, rect.left - width - dx) : Math.min(pageWidth - width - 12, rect.right + dx)
-        const y = rect.top + dy
-        placements.push({
-          item,
-          index,
-          side: side === 'left' ? 'left' : 'right',
-          x,
-          y,
-          anchorX: side === 'left' ? rect.left : rect.right,
+          anchorX: side === 'right' ? rect.right : rect.left,
           anchorY: anchorCenterY,
           rect,
           note,
@@ -1709,21 +1972,16 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       }
 
       // Margin cards vs inline
-      const rightSpace = pageWidth - rect.right
-      const leftSpace = rect.left
-      const canFitRight = rightSpace >= 280
-      const canFitLeft = leftSpace >= 280
+      const canFitRight = rightSpace >= 260
+      const canFitLeft = leftSpace >= 260
 
       let side: 'left' | 'right' | 'marker' = 'marker'
-      if (pageWidth >= 900) {
-        if (canFitRight) side = 'right'
-        else if (canFitLeft) side = 'left'
-      }
+      if (canFitRight || canFitLeft) side = canFitRight && canFitLeft
+        ? (rightSpace >= leftSpace ? 'right' : 'left')
+        : canFitRight ? 'right' : 'left'
 
       if (side === 'marker') {
-        const x = Math.max(12, Math.min(pageWidth - 280, rect.left))
-        const y = rect.bottom + 8
-        placements.push({ item, index, side: 'marker', x, y, anchorX: rect.left, anchorY: rect.bottom, rect, note })
+        placements.push({ item, index, side: 'marker', x: rect.right + scrollX, y: rect.top + scrollY, anchorX: rect.left, anchorY: rect.bottom, rect, note })
       } else {
         const isRight = side === 'right'
         const lastBottom = isRight ? rightLastBottom : leftLastBottom
@@ -1733,7 +1991,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
         if (isRight) rightLastBottom = y + cardHeight
         else leftLastBottom = y + cardHeight
 
-        const x = isRight ? rect.right + 20 : rect.left - 250
+        const x = isRight ? columnRight + 10 : columnLeft - 260
         placements.push({
           item,
           index,
@@ -1749,7 +2007,19 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     }
 
     return placements
-  }, [allNotes, annotationLayoutTick, editingId, highlights])
+  }, [allNotes, annotationLayoutTick, editingId, highlights, open, settings.panelSide, settings.panelWidth])
+
+  const copyUnsavedText = async () => {
+    const value = selected
+      ? `${selected.title ? `${selected.title}\n\n` : ''}${selected.body}`
+      : Object.entries(pages).flatMap(([url, items]) => items.map((note) => `${note.title || 'Untitled note'}\n${url}\n\n${note.body}`)).join('\n\n---\n\n')
+    try {
+      await navigator.clipboard.writeText(value || 'No note text is currently in memory.')
+      setImportError('Copied the current in-memory notes.')
+    } catch {
+      setImportError('Clipboard access is unavailable. Select and copy the note text manually.')
+    }
+  }
 
   return <>
     {selectionToolbar && (
@@ -1872,7 +2142,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
         aria-hidden="true"
         style={{ height: Math.max(document.documentElement.scrollHeight, document.documentElement.clientHeight) }}
       >
-        {annotationPlacements.filter(({ item, note }) => note || editingId === item.id).map(({ item, anchorX, anchorY, x, y }) => {
+        {annotationPlacements.filter(({ item, note, side }) => side !== 'marker' && (note || editingId === item.id)).map(({ item, anchorX, anchorY, x, y }) => {
           const cardWidth = 240
           const endX = x >= anchorX ? x : x + cardWidth
           const endY = y + 16
@@ -1886,7 +2156,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       </svg>
 
       {/* Notes placed anywhere on the page */}
-      {annotationPlacements.filter(({ item, note }) => note || editingId === item.id).map(({ item, x, y, note }) => (
+      {annotationPlacements.filter(({ item, note, side }) => side !== 'marker' && (note || editingId === item.id)).map(({ item, x, y, note }) => (
         <AnnotationCard
           key={item.id}
           item={item}
@@ -1905,6 +2175,28 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
           onMove={(newX, newY) => moveNote(item.id, newX, newY)}
         />
       ))}
+      {annotationPlacements.filter(({ side }) => side === 'marker').map(({ item, index, rect, note }) => (
+        <button
+          key={`marker-${item.id}`}
+          className="dn-inline-marker"
+          style={{ left: rect.right + (window.scrollX ?? 0) - 10, top: rect.top + (window.scrollY ?? 0) - 10 }}
+          title={note ? `Open note ${index + 1}` : `Highlight ${index + 1}; no article gutter is available for a note card`}
+          aria-label={note ? `Open attached note ${index + 1}` : `Highlight ${index + 1}`}
+          onClick={() => {
+            if (note) {
+              const entry = allNotes.find(({ note: candidate }) => candidate.id === note.id)
+              setSelectedPageUrl(entry?.url ?? pageUrl)
+              setSelectedId(note.id)
+              setShowAllNotes(false)
+              setOpen(true)
+            } else {
+              const mark = highlightElements(item.id)[0]
+              const box = mark?.getBoundingClientRect()
+              if (box) setSelectionToolbar({ x: Math.max(8, Math.min(window.innerWidth - 260, box.left + box.width / 2 - 120)), y: Math.max(8, box.top - 54), highlightIds: [item.id] })
+            }
+          }}
+        >{index + 1}</button>
+      ))}
     </div>
 
     {/* Fixed rail minimap */}
@@ -1921,7 +2213,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
             }}
             title={item.text ? `Jump to: “${item.text.slice(0, 35)}${item.text.length > 35 ? '…' : ''}”` : 'Jump to highlight'}
             aria-label="Jump to highlight"
-            onClick={() => document.querySelector<HTMLElement>(`[data-devnotes-highlight="${CSS.escape(item.id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
+            onClick={() => highlightElements(item.id)[0]?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
           />
         )
       })}
@@ -1940,7 +2232,10 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
         <button className="dn-icon-button" onClick={() => setOpen(false)} aria-label="Close panel">×</button>
       </header>
 
-      {settingsOpen && <section className="dn-settings" role="dialog" aria-label="DevNotes settings"><div className="dn-settings-heading"><div><strong>Settings</strong><span>Preferences are stored on this device.</span></div><button className="dn-icon-button" onClick={() => setSettingsOpen(false)} aria-label="Close settings">×</button></div><div className="dn-settings-content"><label>Theme<select value={settings.theme} onChange={(event) => updateSettings({ theme: event.target.value as DevNotesSettings['theme'] })}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label><label>Panel side<select value={settings.panelSide} onChange={(event) => updateSettings({ panelSide: event.target.value as DevNotesSettings['panelSide'] })}><option value="right">Right</option><option value="left">Left</option></select></label><label>Panel width <span>{settings.panelWidth}px</span><input type="range" min="360" max="720" step="10" value={settings.panelWidth} onChange={(event) => updateSettings({ panelWidth: Number(event.target.value) })} /></label><label>Launcher position<select value={settings.launcherPosition} onChange={(event) => updateSettings({ launcherPosition: event.target.value as DevNotesSettings['launcherPosition'] })}><option value="bottom-right">Bottom right</option><option value="bottom-left">Bottom left</option></select></label><label className="dn-settings-check"><input type="checkbox" checked={settings.hideLauncher} onChange={(event) => updateSettings({ hideLauncher: event.target.checked })} />Hide the floating launcher</label><fieldset><legend>Default highlight color</legend><div className="dn-setting-colors">{HIGHLIGHT_COLORS.map((color) => <button key={color} type="button" className={settings.highlightColor === color ? 'selected' : ''} style={{ background: color }} aria-label={`Use highlight color ${color}`} onClick={() => updateSettings({ highlightColor: color })} />)}</div></fieldset><label>Trash retention <span>{settings.trashRetentionDays} days</span><input type="range" min="30" max="3650" step="30" value={settings.trashRetentionDays} onChange={(event) => updateSettings({ trashRetentionDays: Number(event.target.value) })} /></label><label>Version history <span>{settings.historyDepth} versions</span><input type="range" min="1" max="100" value={settings.historyDepth} onChange={(event) => updateSettings({ historyDepth: Number(event.target.value) })} /></label><div className="dn-site-settings"><strong>This site · {hostname}</strong><button onClick={() => void disableOnThisSite()}>Disable DevNotes on this site</button></div><form className="dn-blocklist-add" onSubmit={(event) => { event.preventDefault(); addBlockedHost(blocklistDraft); setBlocklistDraft('') }}><label htmlFor="dn-block-host">Block another site</label><div><input id="dn-block-host" value={blocklistDraft} onChange={(event) => setBlocklistDraft(event.target.value)} placeholder="example.com" /><button type="submit">Add</button></div></form><div className="dn-blocklist"><strong>Blocked sites</strong>{settings.disabledHosts.length ? settings.disabledHosts.map((host) => <div key={host}><span>{host}</span><button aria-label={`Unblock ${host}`} onClick={() => allowHost(host)}>Allow</button></div>) : <small>No custom sites blocked.</small>}<strong>Default protected sites</strong>{DEFAULT_BLOCKED_HOSTS.map((host) => { const allowed = settings.enabledHosts.some((rule) => hostMatches(hostname, rule)) && hostMatches(hostname, host); return <div key={host}><span>{host}</span><button aria-label={`${allowed ? 'Block' : 'Allow'} DevNotes on ${host}`} onClick={() => allowed ? addBlockedHost(host) : allowHost(host)}>{allowed ? 'Block' : 'Allow'}</button></div> })}</div></div></section>}
+      {(runtimeInvalid || saveState === 'error') && <div className="dn-recovery-banner" role="alert"><span>{runtimeInvalid ? 'DevNotes was updated, reload this tab.' : 'DevNotes could not save. Your text is still in memory.'}</span><button onClick={() => void copyUnsavedText()}>Copy notes</button></div>}
+      {incognitoMode && <div className="dn-privacy-banner" role="status">Incognito mode: notes stay in memory for this tab.</div>}
+
+      {settingsOpen && <section className="dn-settings" role="dialog" aria-label="DevNotes settings"><div className="dn-settings-heading"><div><strong>Settings</strong><span>Preferences are stored on this device.</span></div><button className="dn-icon-button" onClick={() => setSettingsOpen(false)} aria-label="Close settings">×</button></div><div className="dn-settings-content"><label>Theme<select value={settings.theme} onChange={(event) => updateSettings({ theme: event.target.value as DevNotesSettings['theme'] })}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label><label>Selection toolbar<select value={settings.toolbarBehavior} onChange={(event) => updateSettings({ toolbarBehavior: event.target.value as DevNotesSettings["toolbarBehavior"] })}><option value="always">Always</option><option value="hold-alt">Hold Alt</option><option value="never">Never</option></select></label><label>Panel side<select value={settings.panelSide} onChange={(event) => updateSettings({ panelSide: event.target.value as DevNotesSettings['panelSide'] })}><option value="right">Right</option><option value="left">Left</option></select></label><label>Panel width <span>{settings.panelWidth}px</span><input type="range" min="360" max="720" step="10" value={settings.panelWidth} onChange={(event) => updateSettings({ panelWidth: Number(event.target.value) })} /></label><label>Launcher position<select value={settings.launcherPosition} onChange={(event) => updateSettings({ launcherPosition: event.target.value as DevNotesSettings['launcherPosition'] })}><option value="bottom-right">Bottom right</option><option value="bottom-left">Bottom left</option></select></label><label className="dn-settings-check"><input type="checkbox" checked={settings.hideLauncher} onChange={(event) => updateSettings({ hideLauncher: event.target.checked })} />Hide the floating launcher</label><fieldset><legend>Default highlight color</legend><div className="dn-setting-colors">{HIGHLIGHT_COLORS.map((color) => <button key={color} type="button" className={settings.highlightColor === color ? 'selected' : ''} style={{ background: color }} aria-label={`Use highlight color ${color}`} onClick={() => updateSettings({ highlightColor: color })} />)}</div></fieldset><label>Trash retention <span>{settings.trashRetentionDays} days</span><input type="range" min="30" max="3650" step="30" value={settings.trashRetentionDays} onChange={(event) => updateSettings({ trashRetentionDays: Number(event.target.value) })} /></label><label>Version history <span>{settings.historyDepth} versions</span><input type="range" min="1" max="100" value={settings.historyDepth} onChange={(event) => updateSettings({ historyDepth: Number(event.target.value) })} /></label><div className="dn-site-settings"><strong>This site · {hostname}</strong><button onClick={() => void disableOnThisSite()}>Disable DevNotes on this site</button></div><form className="dn-blocklist-add" onSubmit={(event) => { event.preventDefault(); addBlockedHost(blocklistDraft); setBlocklistDraft('') }}><label htmlFor="dn-block-host">Block another site</label><div><input id="dn-block-host" value={blocklistDraft} onChange={(event) => setBlocklistDraft(event.target.value)} placeholder="example.com" /><button type="submit">Add</button></div></form><div className="dn-blocklist"><strong>Blocked sites</strong>{settings.disabledHosts.length ? settings.disabledHosts.map((host) => <div key={host}><span>{host}</span><button aria-label={`Unblock ${host}`} onClick={() => allowHost(host)}>Allow</button></div>) : <small>No custom sites blocked.</small>}<strong>Default protected sites</strong>{DEFAULT_BLOCKED_HOSTS.map((host) => { const allowed = settings.enabledHosts.some((rule) => hostMatches(hostname, rule)) && hostMatches(hostname, host); return <div key={host}><span>{host}</span><button aria-label={`${allowed ? 'Block' : 'Allow'} DevNotes on ${host}`} onClick={() => allowed ? addBlockedHost(host) : allowHost(host)}>{allowed ? 'Block' : 'Allow'}</button></div> })}</div></div></section>}
 
       <div className="dn-page">
         <div className="dn-site-icon">{hostname[0]?.toUpperCase()}</div>
@@ -1970,6 +2265,8 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
         </div>
       )}
 
+      {annotationUndo && <div className="dn-undo-toast" role="status"><span>Annotation deleted.</span><button onClick={undoAnnotationDelete}>Undo</button><button aria-label="Dismiss undo message" onClick={() => setAnnotationUndo(null)}>×</button></div>}
+
       <div className="dn-dashboard-tabs">
         <button className={!showAllNotes && !showTrash ? 'active' : ''} onClick={() => { setShowAllNotes(false); setShowArchived(false); setShowFavorites(false); setShowTasks(false); setShowTrash(false); setCollectionFilter('') }}>This page</button>
         <button className={showAllNotes && !showArchived && !showFavorites && !showTasks && !showTrash ? 'active' : ''} onClick={() => { setShowAllNotes(true); setShowArchived(false); setShowFavorites(false); setShowTasks(false); setShowTrash(false) }}>All notes</button>
@@ -1991,7 +2288,8 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       </div>
       {showAllNotes && <div className="dn-collection-bar"><select aria-label="Filter by collection" value={collectionFilter} onChange={(event) => setCollectionFilter(event.target.value)}><option value="">All collections</option>{collections.map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select><input className="dn-domain-filter" aria-label="Filter by website domain" placeholder="Domain" value={domainFilter} onChange={(event) => setDomainFilter(event.target.value)} /><select aria-label="Sort notes" value={sortMode} onChange={(event) => setSortMode(event.target.value as typeof sortMode)}><option value="updated">Updated</option><option value="created">Created</option><option value="title">Title</option></select><input aria-label="Updated after" title="Updated after" type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} /><input aria-label="Updated before" title="Updated before" type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} /><button className="dn-collection-add" onClick={createCollection}>＋</button></div>}
       {showAllNotes && availableTags.length > 0 && <div className="dn-tag-browser"><strong>Tags</strong>{availableTags.map((tag) => <button key={tag} onClick={() => setQuery((value) => `${value} tag:"${tag}"`.trim())}>{tag}</button>)}</div>}
-      {showAllNotes && bulkSelection.length > 0 && <div className="dn-bulk-actions"><strong>{bulkSelection.length} selected</strong><button onClick={applyBulkTags}>Add tags</button><button onClick={() => bulkUpdate((note) => ({ ...note, archived: true }))}>Archive</button><button onClick={() => setBulkSelection([])}>Clear</button></div>}
+      {showAllNotes && bulkSelection.length > 0 && <div className="dn-bulk-actions"><strong>{bulkSelection.length} selected</strong><button onClick={() => setBulkTagEditing(true)}>Add tags</button><button onClick={() => bulkUpdate((note) => ({ ...note, archived: true }))}>Archive</button><button onClick={() => setBulkSelection([])}>Clear</button></div>}
+      {bulkTagEditing && <form className="dn-new-collection" onSubmit={(event) => { event.preventDefault(); applyBulkTags() }}><input autoFocus aria-label="Tags to add" placeholder="Tags, separated by commas" value={bulkTagDraft} onChange={(event) => setBulkTagDraft(event.target.value)} /><button type="submit">Apply</button><button type="button" onClick={() => { setBulkTagEditing(false); setBulkTagDraft('') }}>Cancel</button></form>}
       {addingCollection && <form className="dn-new-collection" onSubmit={(event) => { event.preventDefault(); saveCollection() }}><input autoFocus aria-label="Collection name" placeholder="Collection name" value={collectionDraft} onChange={(event) => setCollectionDraft(event.target.value)} /><button type="submit">Create</button><button type="button" onClick={() => { setAddingCollection(false); setCollectionDraft('') }}>Cancel</button></form>}
       <label className="dn-search"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.8" cy="8.8" r="5.8" /><path d="m13.2 13.2 4 4" /></svg><input ref={searchRef} value={query} onChange={(event) => { setQuery(event.target.value); setLibraryOpen(true); setShowAllNotes(true) }} placeholder="Search notes" /><kbd>{isMac ? '⌘' : 'Ctrl'} K</kbd></label>
       {importError && <div className="dn-import-status" role="status">{importError}<button aria-label="Dismiss message" onClick={() => setImportError('')}>×</button></div>}

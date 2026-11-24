@@ -38,6 +38,7 @@ async function mountIfAllowed() {
   if (mountPending || appEventTarget) return
   mountPending = true
   try {
+    if (document.querySelector('input[type="password"]')) return
     const settings = await readSettings()
     if (!isHostDisabled(location.hostname, settings)) mount()
   } finally { mountPending = false }
@@ -70,6 +71,19 @@ function disableCurrentSite() {
 if (/^https?:/.test(location.protocol)) {
   void mountIfAllowed()
 }
+
+const pageGuard = new MutationObserver(() => {
+  if (document.querySelector('input[type="password"]')) {
+    if (appEventTarget) disableCurrentSite()
+    return
+  }
+  if (appEventTarget && !document.getElementById('devnotes-root')) {
+    appRoot = null
+    appEventTarget = null
+    void mountIfAllowed()
+  }
+})
+if (document.documentElement) pageGuard.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['type'] })
 
 if (typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((message) => {
