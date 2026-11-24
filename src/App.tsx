@@ -11,8 +11,10 @@ type Collection = { id: string; name: string; createdAt: number }
 type NotePlacement = { side: 'left' | 'right' | 'inline'; dx: number; dy: number; manual?: boolean }
 type Highlight = { id: string; noteId?: string; text: string; prefix: string; suffix: string; color: string; createdAt: number; shape?: 'marker' | 'underline' | 'box' | 'bracket' | 'none'; display?: 'inline' | 'sticky'; placement?: NotePlacement; status?: 'attached' | 'orphan'; stickyX?: number; stickyY?: number }
 type PageTask = { id: string; text: string; done: boolean }
-type PageMeta = { status: 'to-read' | 'reading' | 'done'; whySaved: string; tasks: PageTask[]; journalEntry: string; updatedAt: number }
+type PageMeta = { status: 'to-read' | 'reading' | 'done'; whySaved: string; tasks: PageTask[]; journalEntry: string; journalEntries?: Record<string, string>; updatedAt: number }
+const EMPTY_PAGE_META: PageMeta = { status: 'to-read', whySaved: '', tasks: [], journalEntry: '', journalEntries: {}, updatedAt: 0 }
 type AnnotationPlacement = { item: Highlight; index: number; side: 'left' | 'right' | 'marker'; x: number; y: number; anchorX: number; anchorY: number; rect: { left: number; top: number; right: number; bottom: number; width: number; height: number }; note?: Note }
+type ReviewItem = { id: string; kind: 'note' | 'highlight'; url: string; title: string; text: string; note?: Note; createdAt: number }
 type TrashEntry = { note: Note; url: string; deletedAt: number }
 type BackupFile = { format: 'devnotes-backup'; version: number; pages: PageNotes; collections: Collection[]; highlights: Record<string, Highlight[]>; trash: TrashEntry[]; settings?: DevNotesSettings; pageMeta?: Record<string, PageMeta> }
 
@@ -277,12 +279,60 @@ function readPageMeta(): Promise<Record<string, PageMeta>> {
   return new Promise((resolve) => {
     if (isIncognitoContext()) { resolve({}); return }
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {
-      chrome.storage.local.get(PAGEMETA_KEY, (result) => resolve((result[PAGEMETA_KEY] as Record<string, PageMeta> | undefined) ?? {}))
+      chrome.storage.local.get(PAGEMETA_KEY, (result) => resolve(normalizePageMeta(result[PAGEMETA_KEY])))
       return
     }
     if (typeof chrome !== 'undefined' && chrome.runtime) { resolve({}); return }
-    try { resolve(JSON.parse(localStorage.getItem(PAGEMETA_KEY) ?? '{}')) } catch { resolve({}) }
+    try { resolve(normalizePageMeta(JSON.parse(localStorage.getItem(PAGEMETA_KEY) ?? '{}'))) } catch { resolve({}) }
   })
+}
+
+function normalizePageMeta(value: unknown): Record<string, PageMeta> {
+  if (!isRecord(value)) return {}
+  const result: Record<string, PageMeta> = {}
+  for (const [rawUrl, rawMeta] of Object.entries(value)) {
+    if (!isRecord(rawMeta)) continue
+    try {
+      const url = normalizePageUrl(rawUrl)
+      if (!/^https?:$/.test(new URL(url).protocol)) continue
+      const journalEntries = isRecord(rawMeta.journalEntries)
+        ? Object.fromEntries(Object.entries(rawMeta.journalEntries).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
+        : {}
+      result[url] = {
+        status: rawMeta.status === 'reading' || rawMeta.status === 'done' ? rawMeta.status : 'to-read',
+        whySaved: typeof rawMeta.whySaved === 'string' ? rawMeta.whySaved : '',
+        tasks: Array.isArray(rawMeta.tasks) ? rawMeta.tasks.filter((task): task is PageTask => isRecord(task) && typeof task.id === 'string' && typeof task.text === 'string' && typeof task.done === 'boolean') : [],
+        journalEntry: typeof rawMeta.journalEntry === 'string' ? rawMeta.journalEntry : '',
+        journalEntries: journalEntries as Record<string, string>,
+        updatedAt: typeof rawMeta.updatedAt === 'number' ? rawMeta.updatedAt : Date.now(),
+      }
+    } catch { /* Ignore malformed page metadata without blocking other pages. */ }
+  }
+  return result
+}
+
+function writePageMeta(meta: Record<string, PageMeta>): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (isIncognitoContext()) { resolve(); return }
+    const normalized = normalizePageMeta(meta)
+    if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+      try {
+        chrome.storage.local.set({ [PAGEMETA_KEY]: normalized }, () => {
+          const error = chrome.runtime.lastError
+          if (error) reject(new Error(error.message))
+          else resolve()
+        })
+      } catch (error) { reject(error) }
+      return
+    }
+    if (typeof chrome !== 'undefined' && chrome.runtime) { reject(new Error('Chrome storage is unavailable.')); return }
+    try { localStorage.setItem(PAGEMETA_KEY, JSON.stringify(normalized)); resolve() } catch (error) { reject(error) }
+  })
+}
+
+function localDateKey(time = Date.now()) {
+  const date = new Date(time)
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
 function readCollections(): Promise<Collection[]> {
@@ -867,6 +917,15 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   const [blocklistDraft, setBlocklistDraft] = useState('')
   const [trash, setTrash] = useState<TrashEntry[]>([])
   const [allPageMeta, setAllPageMeta] = useState<Record<string, PageMeta>>({})
+  const [pageMetaReady, setPageMetaReady] = useState(false)
+  const [pageTaskDraft, setPageTaskDraft] = useState('')
+  const [storedHighlightsByUrl, setStoredHighlightsByUrl] = useState<Record<string, Highlight[]>>({})
+  const [showDailyReview, setShowDailyReview] = useState(false)
+  const [reviewOpen, setReviewOpen] = useState(false)
+  const [reviewScope, setReviewScope] = useState<'site' | 'tag'>('site')
+  const [reviewTag, setReviewTag] = useState('')
+  const [reviewIndex, setReviewIndex] = useState(0)
+  const [onboardingStep, setOnboardingStep] = useState<number | null>(null)
   const [highlights, setHighlights] = useState<Highlight[]>([])
   const [selectionToolbar, setSelectionToolbar] = useState<{ x: number; y: number; highlightIds?: string[] } | null>(null)
   const [runtimeInvalid, setRuntimeInvalid] = useState(false)
@@ -910,6 +969,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   const collectionsDirtyRef = useRef(false)
   const settingsDirtyRef = useRef(false)
   const settingsVersionRef = useRef(0)
+  const pageMetaDirtyRef = useRef(false)
   const isMac = /Mac|iPhone|iPad/.test(navigator.userAgent)
   const notes = useMemo(() => pages[pageUrl] ?? [], [pages, pageUrl])
   const selectedNotes = useMemo(() => pages[selectedPageUrl] ?? [], [pages, selectedPageUrl])
@@ -917,8 +977,20 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   const hostname = location.hostname.replace(/^www\./, '') || 'This page'
   const darkTheme = settings.theme === 'dark' || (settings.theme === 'system' && systemDark)
   const effectiveTheme = settings.theme === 'system' ? (darkTheme ? 'dark' : 'light') : settings.theme
+  const todayKey = localDateKey()
+  const pageMeta = allPageMeta[pageUrl] ?? EMPTY_PAGE_META
+  const todayJournal = pageMeta.journalEntries?.[todayKey] ?? pageMeta.journalEntry
+  const allHighlightsByUrl = useMemo(() => highlightsForUrl === pageUrl ? { ...storedHighlightsByUrl, [pageUrl]: highlights } : storedHighlightsByUrl, [storedHighlightsByUrl, highlightsForUrl, pageUrl, highlights])
 
   useEffect(() => { highlightsRef.current = highlights }, [highlights])
+
+  useEffect(() => {
+    if (!pageMetaReady || !pageMetaDirtyRef.current) return
+    const timer = window.setTimeout(() => {
+      void writePageMeta(allPageMeta).then(() => { pageMetaDirtyRef.current = false }, () => { setSaveState('error'); setRuntimeInvalid(true) })
+    }, 300)
+    return () => window.clearTimeout(timer)
+  }, [allPageMeta, pageMetaReady])
 
   useEffect(() => {
     const stopSiteHotkeys = (event: Event) => {
@@ -958,6 +1030,13 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       if (!active) return
       setSettings(saved)
       setSettingsReady(true)
+      if (!saved.onboardingComplete) {
+        void Promise.all([readPages(), readHighlights()]).then(([savedPages, savedHighlights]) => {
+          if (!active || Object.keys(savedPages).length > 0 || Object.values(savedHighlights).some((items) => items.length > 0)) return
+          setOpen(true)
+          setOnboardingStep(0)
+        }).catch(() => {})
+      }
       void readTrash().then((items) => {
         if (!active) return
         const retained = boundedTrash(items, saved.trashRetentionDays)
@@ -965,7 +1044,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
         if (retained.length !== items.length) void writeTrash(retained, saved.trashRetentionDays)
       })
     })
-    void readPageMeta().then((meta) => { if (active) setAllPageMeta(meta) })
+    void readPageMeta().then((meta) => { if (active) { setAllPageMeta(meta); setPageMetaReady(true) } }, () => { if (active) { setRuntimeInvalid(true); setPageMetaReady(true) } })
     return () => { active = false }
   }, [])
 
@@ -1062,6 +1141,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     clearPageHighlights()
     void readHighlights().then((saved) => {
       if (!active) return
+      setStoredHighlightsByUrl(saved)
       const pageHighlights = saved[pageUrl] ?? []
       setHighlights(pageHighlights)
       runApplyHighlights(pageHighlights)
@@ -1278,6 +1358,26 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
 
   const allNotes = useMemo(() => Object.entries(pages).flatMap(([url, items]) => items.map((note) => ({ note, url }))), [pages])
   const availableTags = useMemo(() => [...new Set(allNotes.flatMap(({ note }) => note.tags ?? []))].sort((a, b) => a.localeCompare(b)), [allNotes])
+  const dailyReviewItems = useMemo<ReviewItem[]>(() => {
+    const notesToday = allNotes.filter(({ note }) => localDateKey(note.createdAt) === todayKey || localDateKey(note.updatedAt) === todayKey).map(({ note, url }) => ({ id: note.id, kind: 'note' as const, url, title: note.title || 'Untitled note', text: cleanNoteBody(note.body), note, createdAt: note.updatedAt }))
+    const highlightsToday = Object.entries(allHighlightsByUrl).flatMap(([url, items]) => items.filter((item) => localDateKey(item.createdAt) === todayKey).map((item) => {
+      const note = allNotes.find(({ note: candidate }) => candidate.id === item.noteId)?.note
+      return { id: item.id, kind: 'highlight' as const, url, title: note?.title || 'Highlight', text: note ? cleanNoteBody(note.body) : `> ${item.text}`, note, createdAt: item.createdAt }
+    }))
+    return [...notesToday, ...highlightsToday].sort((a, b) => b.createdAt - a.createdAt)
+  }, [allNotes, allHighlightsByUrl, todayKey])
+  const reviewItems = useMemo<ReviewItem[]>(() => {
+    const noteItems = allNotes.filter(({ url, note }) => reviewScope === 'site' ? safeHostname(url) === hostname : Boolean(reviewTag) && (note.tags ?? []).includes(reviewTag)).map(({ note, url }) => ({ id: note.id, kind: 'note' as const, url, title: note.title || 'Untitled note', text: cleanNoteBody(note.body), note, createdAt: note.updatedAt }))
+    const highlightItems = Object.entries(allHighlightsByUrl).flatMap(([url, items]) => items.filter((item) => {
+      if (reviewScope === 'site') return safeHostname(url) === hostname
+      const note = allNotes.find(({ note: candidate }) => candidate.id === item.noteId)?.note
+      return Boolean(reviewTag) && Boolean(note?.tags?.includes(reviewTag))
+    }).map((item) => {
+      const note = allNotes.find(({ note: candidate }) => candidate.id === item.noteId)?.note
+      return { id: item.id, kind: 'highlight' as const, url, title: note?.title || 'Highlight', text: note ? cleanNoteBody(note.body) : `> ${item.text}`, note, createdAt: item.createdAt }
+    }))
+    return [...noteItems, ...highlightItems].sort((a, b) => a.createdAt - b.createdAt)
+  }, [allNotes, allHighlightsByUrl, reviewScope, reviewTag, hostname])
   const backlinks = useMemo(() => selected ? allNotes.filter(({ note }) => note.id !== selected.id && (note.body.toLowerCase().includes(`[[${selected.title.trim().toLowerCase()}]]`) || note.body.includes(`[[id:${selected.id}|`))) : [], [allNotes, selected])
   const annotationNoteIds = useMemo(() => new Set(highlights.flatMap((item) => item.noteId ? [item.noteId] : [])), [highlights])
 
@@ -1516,6 +1616,28 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     settingsVersionRef.current += 1
     settingsDirtyRef.current = true
     setSettings((current) => normalizeSettings({ ...current, ...patch }))
+  }
+
+  const updatePageMeta = (patch: Partial<PageMeta>) => {
+    pageMetaDirtyRef.current = true
+    setAllPageMeta((current) => {
+      const previous = current[pageUrl] ?? { status: 'to-read', whySaved: '', tasks: [], journalEntry: '', journalEntries: {}, updatedAt: Date.now() }
+      return { ...current, [pageUrl]: { ...previous, ...patch, updatedAt: Date.now() } }
+    })
+  }
+
+  const addPageTask = () => {
+    const text = pageTaskDraft.trim()
+    if (!text) return
+    updatePageMeta({ tasks: [...pageMeta.tasks, { id: crypto.randomUUID(), text, done: false }] })
+    setPageTaskDraft('')
+  }
+
+  const updateTodayJournal = (entry: string) => updatePageMeta({ journalEntries: { ...(pageMeta.journalEntries ?? {}), [todayKey]: entry }, journalEntry: entry })
+
+  const completeOnboarding = () => {
+    updateSettings({ onboardingComplete: true })
+    setOnboardingStep(null)
   }
 
   const disableOnThisSite = async () => {
@@ -1760,6 +1882,54 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     link.download = `devnotes-${new Date().toISOString().slice(0, 10)}.md`
     link.click()
     window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
+
+  const pageMarkdown = () => {
+    const pageHighlights = highlights.map((item) => {
+      const note = allNotes.find(({ note: candidate }) => candidate.id === item.noteId)?.note
+      const link = `${pageUrl}#:~:text=${encodeURIComponent(item.text)}`
+      return `> ${item.text}\n\n[Open passage](${link})${note?.body.trim() ? `\n\n${cleanNoteBody(note.body).trim()}` : ''}`
+    })
+    const attachedNoteIds = new Set(highlights.flatMap((item) => item.noteId ? [item.noteId] : []))
+    const standaloneNotes = notes.filter((note) => !attachedNoteIds.has(note.id)).map((note) => `### ${note.title.trim() || 'Untitled note'}\n\n${cleanNoteBody(note.body).trim() || '_No content_'}`)
+    return `# ${pageTitle}\n\nPage: ${pageUrl}\n\n${pageHighlights.length ? `## Highlights\n\n${pageHighlights.join('\n\n---\n\n')}` : ''}${standaloneNotes.length ? `${pageHighlights.length ? '\n\n' : ''}## Notes\n\n${standaloneNotes.join('\n\n---\n\n')}` : ''}`.trim() + '\n'
+  }
+
+  const exportPageMarkdown = () => {
+    const blob = new Blob([pageMarkdown()], { type: 'text/markdown;charset=utf-8' })
+    const downloadUrl = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = downloadUrl
+    link.download = `${safeHostname(pageUrl).replace(/[^a-z0-9.-]/gi, '-')}-devnotes.md`
+    link.click()
+    window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000)
+  }
+
+  const copyPageMarkdown = async () => {
+    try {
+      await navigator.clipboard.writeText(pageMarkdown())
+      setImportError('Copied this page as Markdown.')
+    } catch {
+      setImportError('Clipboard access is unavailable. Use Export page to save the Markdown file.')
+    }
+  }
+
+  const openReviewItem = (item?: ReviewItem) => {
+    if (!item) return
+    setReviewOpen(false)
+    if (item.note) {
+      setSelectedPageUrl(item.url)
+      setSelectedId(item.note.id)
+      setShowAllNotes(true)
+      setShowArchived(false)
+      setShowFavorites(false)
+      setShowTasks(false)
+      setShowTrash(false)
+      setOpen(true)
+      return
+    }
+    if (item.url === pageUrl) highlightElements(item.id)[0]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    else window.open(item.url, '_blank', 'noopener,noreferrer')
   }
 
   const exportJSON = async () => {
@@ -2260,12 +2430,37 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
 
       {settingsOpen && <section className="dn-settings" role="dialog" aria-label="DevNotes settings"><div className="dn-settings-heading"><div><strong>Settings</strong><span>Preferences are stored on this device.</span></div><button className="dn-icon-button" onClick={() => setSettingsOpen(false)} aria-label="Close settings">×</button></div><div className="dn-settings-content"><label>Theme<select value={settings.theme} onChange={(event) => updateSettings({ theme: event.target.value as DevNotesSettings['theme'] })}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option><option value="sepia">Sepia</option></select></label><label>Selection toolbar<select value={settings.toolbarBehavior} onChange={(event) => updateSettings({ toolbarBehavior: event.target.value as DevNotesSettings["toolbarBehavior"] })}><option value="always">Always</option><option value="hold-alt">Hold Alt</option><option value="never">Never</option></select></label><label>Text size<select value={settings.textSize} onChange={(event) => updateSettings({ textSize: event.target.value as DevNotesSettings["textSize"] })}><option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option></select></label><label>Panel side<select value={settings.panelSide} onChange={(event) => updateSettings({ panelSide: event.target.value as DevNotesSettings['panelSide'] })}><option value="right">Right</option><option value="left">Left</option></select></label><label>Panel width <span>{settings.panelWidth}px</span><input type="range" min="360" max="720" step="10" value={settings.panelWidth} onChange={(event) => updateSettings({ panelWidth: Number(event.target.value) })} /></label><label>Launcher position<select value={settings.launcherPosition} onChange={(event) => updateSettings({ launcherPosition: event.target.value as DevNotesSettings['launcherPosition'] })}><option value="bottom-right">Bottom right</option><option value="bottom-left">Bottom left</option></select></label><label className="dn-settings-check"><input type="checkbox" checked={settings.hideLauncher} onChange={(event) => updateSettings({ hideLauncher: event.target.checked })} />Hide the floating launcher</label><fieldset><legend>Default highlight color</legend><div className="dn-setting-colors">{HIGHLIGHT_COLORS.map((color) => <button key={color} type="button" className={settings.highlightColor === color ? 'selected' : ''} style={{ background: color }} aria-label={`Use highlight color ${color}`} onClick={() => updateSettings({ highlightColor: color })} />)}</div></fieldset><label>Trash retention <span>{settings.trashRetentionDays} days</span><input type="range" min="30" max="3650" step="30" value={settings.trashRetentionDays} onChange={(event) => updateSettings({ trashRetentionDays: Number(event.target.value) })} /></label><label>Version history <span>{settings.historyDepth} versions</span><input type="range" min="1" max="100" value={settings.historyDepth} onChange={(event) => updateSettings({ historyDepth: Number(event.target.value) })} /></label><div className="dn-site-settings"><strong>This site · {hostname}</strong><button onClick={() => void disableOnThisSite()}>Disable DevNotes on this site</button></div><form className="dn-blocklist-add" onSubmit={(event) => { event.preventDefault(); addBlockedHost(blocklistDraft); setBlocklistDraft('') }}><label htmlFor="dn-block-host">Block another site</label><div><input id="dn-block-host" value={blocklistDraft} onChange={(event) => setBlocklistDraft(event.target.value)} placeholder="example.com" /><button type="submit">Add</button></div></form><div className="dn-blocklist"><strong>Blocked sites</strong>{settings.disabledHosts.length ? settings.disabledHosts.map((host) => <div key={host}><span>{host}</span><button aria-label={`Unblock ${host}`} onClick={() => allowHost(host)}>Allow</button></div>) : <small>No custom sites blocked.</small>}<strong>Default protected sites</strong>{DEFAULT_BLOCKED_HOSTS.map((host) => { const allowed = settings.enabledHosts.some((rule) => hostMatches(hostname, rule)) && hostMatches(hostname, host); return <div key={host}><span>{host}</span><button aria-label={`${allowed ? 'Block' : 'Allow'} DevNotes on ${host}`} onClick={() => allowed ? addBlockedHost(host) : allowHost(host)}>{allowed ? 'Block' : 'Allow'}</button></div> })}</div></div></section>}
 
+      {onboardingStep !== null && <div className="dn-modal-backdrop"><section className="dn-onboarding" role="dialog" aria-modal="true" aria-label="Welcome to DevNotes"><span className="dn-onboarding-step">STEP {onboardingStep + 1} OF 3</span><h2>{['Keep notes beside the source', 'Make a reading trail', 'Find it again'][onboardingStep]}</h2><p>{[
+        'Select a passage and choose Note or Sticky. Your annotation appears beside the page, and the note is created when you start typing.',
+        'Set a reading status, save why a page matters, add tasks, and write a dated journal entry as you read.',
+        'Use Library search, collections, tags, and Review to return to useful notes. Export Markdown or make a local backup whenever you need it.',
+      ][onboardingStep]}</p><div className="dn-onboarding-actions"><button onClick={completeOnboarding}>Skip</button>{onboardingStep > 0 && <button onClick={() => setOnboardingStep((step) => Math.max(0, (step ?? 1) - 1))}>Back</button>}<button className="primary" onClick={() => onboardingStep === 2 ? completeOnboarding() : setOnboardingStep(onboardingStep + 1)}>{onboardingStep === 2 ? 'Get started' : 'Continue'}</button></div></section></div>}
       <div className="dn-page">
         <div className="dn-site-icon">{hostname[0]?.toUpperCase()}</div>
         <div className="dn-page-copy"><strong>{hostname}</strong><span title={pageTitle}>{pageTitle}</span></div>
         <button className="dn-clip" title="Clip the main article" onClick={clipArticle}>Clip</button>
+        <button className="dn-clip" title="Copy page notes and highlights as Markdown" onClick={() => void copyPageMarkdown()}>Copy</button>
+        <button className="dn-clip" title="Export page notes and highlights as Markdown" onClick={exportPageMarkdown}>Export</button>
         <button className="dn-icon-button dn-more" title="Highlight selection and save as a note" aria-label="Capture selected text" onClick={() => captureSelection()}>✳</button>
       </div>
+
+      {!showAllNotes && !showTrash && <section className="dn-page-extras" aria-label="Page reading details">
+        <div className="dn-section-hdr">Reading status</div>
+        <div className="dn-status-group">{([['to-read', 'To read'], ['reading', 'Reading'], ['done', 'Done']] as const).map(([status, label]) => <button key={status} className={`dn-status-btn ${pageMeta.status === status ? 'active' : ''}`} onClick={() => updatePageMeta({ status })}>{label}</button>)}</div>
+        <label className="dn-section-hdr" htmlFor="dn-why-saved">Why I saved this</label>
+        <input id="dn-why-saved" className="dn-why-input" value={pageMeta.whySaved} placeholder="What made this page worth keeping?" onChange={(event) => updatePageMeta({ whySaved: event.target.value })} />
+        <div className="dn-section-hdr">Page tasks</div>
+        <div className="dn-tasks-box">{pageMeta.tasks.map((task) => <label key={task.id} className={`dn-task-item ${task.done ? 'is-done' : ''}`}><input type="checkbox" checked={task.done} onChange={(event) => updatePageMeta({ tasks: pageMeta.tasks.map((item) => item.id === task.id ? { ...item, done: event.target.checked } : item) })} /><span>{task.text}</span><button type="button" aria-label={`Remove task ${task.text}`} onClick={(event) => { event.preventDefault(); event.stopPropagation(); updatePageMeta({ tasks: pageMeta.tasks.filter((item) => item.id !== task.id) }) }}>×</button></label>)}</div>
+        <form className="dn-add-task-form" onSubmit={(event) => { event.preventDefault(); addPageTask() }}><input aria-label="Add a page task" placeholder="Add a next step…" value={pageTaskDraft} onChange={(event) => setPageTaskDraft(event.target.value)} /><button type="submit">Add</button></form>
+        {availableTags.length > 0 && <><div className="dn-section-hdr">Page tags</div><div className="dn-pill-tags">{availableTags.filter((tag) => notes.some((note) => note.tags?.includes(tag))).map((tag) => <span key={tag} className="dn-pill-tag">{tag}</span>)}</div></>}
+        <div className="dn-section-hdr">Today's journal · {todayKey}</div>
+        <textarea className="dn-today-box" aria-label="Today's journal entry" placeholder="What stood out on this page today?" value={todayJournal} onChange={(event) => updateTodayJournal(event.target.value)} />
+        {Object.entries(pageMeta.journalEntries ?? {}).filter(([date, entry]) => date !== todayKey && entry.trim()).sort(([a], [b]) => b.localeCompare(a)).slice(0, 3).map(([date, entry]) => <div className="dn-journal-history" key={date}><strong>{date}</strong><span>{entry}</span></div>)}
+        <div className="dn-extra-actions"><button onClick={() => setShowDailyReview((value) => !value)}>{showDailyReview ? 'Hide' : 'What I read today'} <span>{dailyReviewItems.length}</span></button><button onClick={() => { setReviewScope('site'); setReviewIndex(0); setReviewOpen(true) }}>Review this site</button></div>
+        {showDailyReview && <div className="dn-today-review">{dailyReviewItems.length ? dailyReviewItems.map((item) => <article key={`${item.kind}:${item.id}`}><strong>{item.title}</strong><p>{item.text || 'No note text'}</p><small>{safeHostname(item.url)} · {item.kind}</small></article>) : <p>No notes or annotations added today yet.</p>}</div>}
+        <div className="dn-section-hdr">Related notes</div>
+        <div className="dn-related-list">{allNotes.filter(({ note }) => note.id && (note.tags ?? []).some((tag) => notes.some((pageNote) => pageNote.tags?.includes(tag))) && !notes.some((pageNote) => pageNote.id === note.id)).slice(0, 4).map(({ note, url }) => <button className="dn-related-item" key={note.id} onClick={() => { setSelectedPageUrl(url); setSelectedId(note.id); setShowAllNotes(true) }}><span>{note.title || 'Untitled note'}</span><span>{safeHostname(url)}</span></button>)}</div>
+      </section>}
 
       {orphanedHighlights.length > 0 && (
         <div className="dn-orphans-card" role="region" aria-label="Lost anchors" style={{ margin: '0 24px 10px' }}>
@@ -2298,6 +2493,8 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
         <button className={showArchived ? 'active' : ''} onClick={() => { setShowAllNotes(true); setShowArchived(true); setShowFavorites(false); setShowTasks(false); setShowTrash(false) }}>Archived</button>
         <button className={showTrash ? 'active' : ''} onClick={() => { setShowAllNotes(true); setShowTrash(true); setShowArchived(false); setShowFavorites(false); setShowTasks(false) }}>Trash</button>
       </div>
+      <div className="dn-review-launch"><button onClick={() => { setReviewIndex(0); setReviewOpen(true) }}>Review notes & highlights</button></div>
+      {reviewOpen && <section className="dn-review-dialog" role="dialog" aria-modal="true" aria-label="Review notes and highlights"><div className="dn-review-heading"><div><strong>Review</strong><span>{reviewItems.length ? `${Math.min(reviewIndex + 1, reviewItems.length)} of ${reviewItems.length}` : 'Nothing to review yet'}</span></div><button className="dn-icon-button" aria-label="Close review" onClick={() => setReviewOpen(false)}>×</button></div><div className="dn-review-filters"><label>Review by<select value={reviewScope} onChange={(event) => { setReviewScope(event.target.value as typeof reviewScope); setReviewIndex(0) }}><option value="site">This site</option><option value="tag">Tag</option></select></label>{reviewScope === 'tag' && <label>Tag<select value={reviewTag} onChange={(event) => { setReviewTag(event.target.value); setReviewIndex(0) }}><option value="">Choose a tag</option>{availableTags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}</select></label>}</div>{reviewItems.length ? <><article className="dn-review-item"><span>{reviewItems[reviewIndex]?.kind} · {safeHostname(reviewItems[reviewIndex]?.url ?? pageUrl)}</span><h2>{reviewItems[reviewIndex]?.title}</h2><p>{reviewItems[reviewIndex]?.text || 'No note text'}</p></article><div className="dn-review-controls"><button disabled={reviewIndex === 0} onClick={() => setReviewIndex((index) => Math.max(0, index - 1))}>Previous</button><button disabled={reviewIndex >= reviewItems.length - 1} onClick={() => setReviewIndex((index) => Math.min(reviewItems.length - 1, index + 1))}>Next</button><button className="primary" onClick={() => openReviewItem(reviewItems[reviewIndex])}>Open item</button></div></> : <div className="dn-empty">Select a site or tag with saved notes to begin.</div>}</section>}
       <div className="dn-page-heading">
         <h1>{showTrash ? 'Trash' : showArchived ? 'Archived' : showTasks ? 'Tasks' : showFavorites ? 'Favorites' : showAllNotes ? 'All notes' : 'Page notes'} <span>{showTrash ? trash.length : showArchived ? allNotes.filter(({ note }) => note.archived).length : showTasks ? allNotes.filter(({ note }) => !note.archived && /(?:^|\n)\s*[-*+]\s*\[ \]/.test(note.body)).length : showFavorites ? allNotes.filter(({ note }) => note.favorite && !note.archived).length : showAllNotes ? allNotes.filter(({ note }) => !note.archived).length : notes.filter((note) => !note.archived).length}</span></h1>
         <div className="dn-heading-actions">

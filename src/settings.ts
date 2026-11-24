@@ -17,6 +17,7 @@ export type DevNotesSettings = {
   noteFont: 'serif' | 'handwriting' | 'mono'
   toolbarBehavior: 'always' | 'hold-alt' | 'never'
   textSize: 'small' | 'medium' | 'large'
+  onboardingComplete: boolean
 }
 
 export const DEFAULT_SETTINGS: DevNotesSettings = {
@@ -35,6 +36,7 @@ export const DEFAULT_SETTINGS: DevNotesSettings = {
   noteFont: 'serif',
   toolbarBehavior: 'always',
   textSize: 'medium',
+  onboardingComplete: false,
 }
 
 export const DEFAULT_BLOCKED_HOSTS = [
@@ -75,6 +77,7 @@ export function normalizeSettings(value: unknown): DevNotesSettings {
     noteFont: ['serif', 'handwriting', 'mono'].includes(raw.noteFont as string) ? raw.noteFont as DevNotesSettings['noteFont'] : DEFAULT_SETTINGS.noteFont,
     toolbarBehavior: ['always', 'hold-alt', 'never'].includes(raw.toolbarBehavior as string) ? raw.toolbarBehavior as DevNotesSettings['toolbarBehavior'] : DEFAULT_SETTINGS.toolbarBehavior,
     textSize: ['small', 'medium', 'large'].includes(raw.textSize as string) ? raw.textSize as DevNotesSettings['textSize'] : DEFAULT_SETTINGS.textSize,
+    onboardingComplete: Boolean(raw.onboardingComplete),
   }
 }
 
