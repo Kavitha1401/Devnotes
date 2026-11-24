@@ -1,22 +1,19 @@
-import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
 import { DEFAULT_BLOCKED_HOSTS, DEFAULT_SETTINGS, HIGHLIGHT_COLORS, SETTINGS_KEY, hostMatches, isHostDisabled, normalizeHost, normalizeSettings, readSettings, writeSettings, type DevNotesSettings } from './settings'
+import { cleanNoteBody, isRecord, mergePages, migratePages, normalizePageUrl, removeDeletedPages } from './storage/core'
+import { validateBackup } from './storage/backup'
+import type { BackupFile, Collection, Highlight, Note, NotePlacement, PageMeta, PageNotes, PageTask, Revision, TrashEntry } from './storage/types'
+import { findBestAnchor } from './highlights/anchor'
+import { TagInput } from './components/TagInput'
+import { AnnotationCard } from './components/AnnotationCard'
+import { useSystemTheme } from './hooks/useSystemTheme'
 
-type Note = { id: string; title: string; body: string; tags?: string[]; collectionIds?: string[]; pinned?: boolean; favorite?: boolean; archived?: boolean; history?: Revision[]; createdAt: number; updatedAt: number }
-type Revision = { id: string; title: string; body: string; savedAt: number }
-type PageNotes = Record<string, Note[]>
-type Collection = { id: string; name: string; createdAt: number }
-type NotePlacement = { side: 'left' | 'right' | 'inline'; dx: number; dy: number; manual?: boolean }
-type Highlight = { id: string; noteId?: string; text: string; prefix: string; suffix: string; color: string; createdAt: number; shape?: 'marker' | 'underline' | 'box' | 'bracket' | 'none'; display?: 'inline' | 'sticky'; placement?: NotePlacement; status?: 'attached' | 'orphan'; stickyX?: number; stickyY?: number }
-type PageTask = { id: string; text: string; done: boolean }
-type PageMeta = { status: 'to-read' | 'reading' | 'done'; whySaved: string; tasks: PageTask[]; journalEntry: string; journalEntries?: Record<string, string>; updatedAt: number }
 const EMPTY_PAGE_META: PageMeta = { status: 'to-read', whySaved: '', tasks: [], journalEntry: '', journalEntries: {}, updatedAt: 0 }
 type AnnotationPlacement = { item: Highlight; index: number; side: 'left' | 'right' | 'marker'; x: number; y: number; anchorX: number; anchorY: number; rect: { left: number; top: number; right: number; bottom: number; width: number; height: number }; note?: Note }
 type ReviewItem = { id: string; kind: 'note' | 'highlight'; url: string; title: string; text: string; note?: Note; createdAt: number }
-type TrashEntry = { note: Note; url: string; deletedAt: number }
-type BackupFile = { format: 'devnotes-backup'; version: number; pages: PageNotes; collections: Collection[]; highlights: Record<string, Highlight[]>; trash: TrashEntry[]; settings?: DevNotesSettings; pageMeta?: Record<string, PageMeta> }
 
 const STORAGE_KEY = 'devnotes-pages'
 const DELETED_KEY = 'devnotes-deleted-notes'
@@ -32,111 +29,6 @@ const NOTE_TEMPLATES = {
   'Meeting notes': '# Meeting notes\n\nDate: \nAttendees: \n\n## Agenda\n\n## Notes\n\n## Decisions\n\n## Action items\n- [ ] \n',
   'Reading note': '# Reading note\n\n## Summary\n\n## Key ideas\n- \n\n## Quotes\n> \n\n## My thoughts\n\n## Follow-up\n',
 } as const
-function normalizePageUrl(href: string) {
-  const url = new URL(href)
-  url.hash = ''
-  // Tracking parameters do not make a page a different note destination.
-  const trackingKeys: string[] = []
-  url.searchParams.forEach((_value, key) => { if (/^(utm_.+|gclid|fbclid|mc_cid|mc_eid|token|access_token|refresh_token|auth|authorization|session|sessionid|sid|api_key|apikey|key|code|password|secret|jwt)$/i.test(key)) trackingKeys.push(key) })
-  for (const key of trackingKeys) {
-    url.searchParams.delete(key)
-  }
-  url.searchParams.sort()
-  return url.toString().replace(/\/$/, '')
-}
-
-function migratePages(value: PageNotes): PageNotes {
-  if (!isRecord(value)) return {}
-  const pages: PageNotes = {}
-  for (const [url, rawNotes] of Object.entries(value)) {
-    let normalizedUrl: string
-    try {
-      normalizedUrl = normalizePageUrl(url)
-      if (!/^https?:$/.test(new URL(normalizedUrl).protocol)) continue
-    } catch { continue }
-    if (!Array.isArray(rawNotes)) continue
-    const notes = rawNotes.filter((note): note is Note => isRecord(note) && typeof note.id === 'string' && typeof note.title === 'string' && typeof note.body === 'string' && typeof note.createdAt === 'number' && typeof note.updatedAt === 'number').map((note) => ({
-      ...note,
-      tags: Array.isArray(note.tags) ? note.tags.filter((tag): tag is string => typeof tag === 'string') : [],
-      collectionIds: Array.isArray(note.collectionIds) ? note.collectionIds.filter((id): id is string => typeof id === 'string') : [],
-      history: Array.isArray(note.history) ? note.history.filter((item): item is Revision => isRecord(item) && typeof item.id === 'string' && typeof item.title === 'string' && typeof item.body === 'string' && typeof item.savedAt === 'number').slice(-20) : [],
-      pinned: Boolean(note.pinned),
-      favorite: Boolean(note.favorite),
-      archived: Boolean(note.archived),
-    }))
-    pages[normalizedUrl] = [...(pages[normalizedUrl] ?? []), ...notes]
-  }
-  return pages
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function validatePageNotes(value: unknown): PageNotes | null {
-  if (!isRecord(value)) return null
-  const result: PageNotes = {}
-  for (const [url, rawNotes] of Object.entries(value)) {
-    try { if (!/^https?:$/.test(new URL(url).protocol)) return null } catch { return null }
-    if (!Array.isArray(rawNotes) || rawNotes.some((note) => !isRecord(note) || typeof note.id !== 'string' || typeof note.title !== 'string' || typeof note.body !== 'string' || typeof note.createdAt !== 'number' || typeof note.updatedAt !== 'number')) return null
-    result[normalizePageUrl(url)] = rawNotes as Note[]
-  }
-  return migratePages(result)
-}
-
-function validateBackup(value: unknown): BackupFile | null {
-  if (!isRecord(value) || value.format !== 'devnotes-backup' || typeof value.version !== 'number') return null
-  const pages = validatePageNotes(value.pages)
-  if (!pages) return null
-  const collections = value.collections === undefined ? [] : value.collections
-  if (!Array.isArray(collections) || collections.some((item) => !isRecord(item) || typeof item.id !== 'string' || typeof item.name !== 'string')) return null
-  const highlights = value.highlights === undefined ? {} : value.highlights
-  if (!isRecord(highlights) || Object.values(highlights).some((items) => !Array.isArray(items) || items.some((item) => !isRecord(item) || typeof item.id !== 'string' || typeof item.text !== 'string' || typeof item.prefix !== 'string' || typeof item.suffix !== 'string' || typeof item.color !== 'string'))) return null
-  const normalizedHighlights: Record<string, Highlight[]> = {}
-  for (const [url, items] of Object.entries(highlights)) {
-    try {
-      const normalizedUrl = normalizePageUrl(url)
-      if (!/^https?:$/.test(new URL(normalizedUrl).protocol)) return null
-      normalizedHighlights[normalizedUrl] = (items as Highlight[]).filter((item) => item.text.length > 0 && item.text.length <= 5_000).map((item) => {
-        const placement: NotePlacement = item.placement && typeof item.placement.dx === 'number' && typeof item.placement.dy === 'number'
-          ? { side: item.placement.side === 'left' ? 'left' : 'right', dx: Math.round(item.placement.dx), dy: Math.round(item.placement.dy), manual: Boolean(item.placement.manual) }
-          : { side: 'right', dx: 24, dy: 0 }
-        return {
-          ...item,
-          color: ['#f6e58d', '#c8e6a0', '#b7dff2', '#f2c5d2'].includes(item.color) ? item.color : '#f6e58d',
-          shape: ['marker', 'underline', 'box', 'bracket'].includes(item.shape ?? '') ? item.shape : 'marker',
-          display: item.display === 'sticky' ? 'sticky' : 'inline',
-          placement,
-          status: item.status === 'orphan' ? 'orphan' : 'attached',
-          stickyX: undefined,
-          stickyY: undefined,
-        }
-      })
-    } catch { return null }
-  }
-  const trash = value.trash === undefined ? [] : value.trash
-  if (!Array.isArray(trash) || trash.some((item) => !isRecord(item) || typeof item.url !== 'string' || typeof item.deletedAt !== 'number' || validatePageNotes({ [item.url]: [item.note] }) === null)) return null
-  const normalizedTrash = (trash as TrashEntry[]).map((item) => ({ ...item, url: normalizePageUrl(item.url) }))
-  return { format: 'devnotes-backup', version: value.version, pages, collections: collections as Collection[], highlights: normalizedHighlights, trash: normalizedTrash, settings: value.settings === undefined ? undefined : normalizeSettings(value.settings) }
-}
-
-function mergePages(current: PageNotes, incoming: PageNotes): PageNotes {
-  const merged: PageNotes = { ...current }
-  for (const [url, notes] of Object.entries(incoming)) {
-    const byId = new Map((merged[url] ?? []).map((note) => [note.id, note]))
-    for (const note of notes) {
-      const previous = byId.get(note.id)
-      if (!previous || note.updatedAt >= previous.updatedAt) byId.set(note.id, note)
-    }
-    merged[url] = [...byId.values()]
-  }
-  return merged
-}
-
-function removeDeletedPages(pages: PageNotes, deleted: Record<string, number>): PageNotes {
-  return Object.fromEntries(Object.entries(pages).map(([url, notes]) => [url, notes.filter((note) => !deleted[note.id])]))
-}
-
 function pruneTombstones(value: Record<string, number>): Record<string, number> {
   const cutoff = Date.now() - 180 * 24 * 60 * 60 * 1000
   return Object.fromEntries(Object.entries(value).filter(([, deletedAt]) => typeof deletedAt === 'number' && deletedAt >= cutoff).sort((a, b) => a[1] - b[1]).slice(-2_000))
@@ -163,7 +55,7 @@ function readPages(): Promise<PageNotes> {
     if (isIncognitoContext()) { resolve({}); return }
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {
       chrome.storage.local.get([STORAGE_KEY, SCHEMA_VERSION_KEY], (result) => {
-        const migrated = migratePages((result[STORAGE_KEY] as PageNotes | undefined) ?? {})
+        const migrated = migratePages<Note>((result[STORAGE_KEY] as PageNotes | undefined) ?? {})
         if (Number(result[SCHEMA_VERSION_KEY] ?? 0) < CURRENT_SCHEMA_VERSION) {
           try { chrome.storage.local.set({ [STORAGE_KEY]: migrated, [SCHEMA_VERSION_KEY]: CURRENT_SCHEMA_VERSION }) } catch { /* The panel remains usable in memory if storage is unavailable. */ }
         }
@@ -173,7 +65,7 @@ function readPages(): Promise<PageNotes> {
     }
     if (typeof chrome !== 'undefined' && chrome.runtime) { resolve({}); return }
     try {
-      const migrated = migratePages(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}'))
+      const migrated = migratePages<Note>(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}'))
       if (Number(localStorage.getItem(SCHEMA_VERSION_KEY) ?? 0) < CURRENT_SCHEMA_VERSION) {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated))
         localStorage.setItem(SCHEMA_VERSION_KEY, String(CURRENT_SCHEMA_VERSION))
@@ -188,7 +80,7 @@ function writePages(pages: PageNotes, deletedNotes: Record<string, number> = {})
     if (isIncognitoContext()) { resolve(); return }
     if (typeof chrome !== 'undefined' && chrome.storage?.local) {
       chrome.storage.local.get([STORAGE_KEY, DELETED_KEY], (result) => {
-        const current = migratePages((result[STORAGE_KEY] as PageNotes | undefined) ?? {})
+        const current = migratePages<Note>((result[STORAGE_KEY] as PageNotes | undefined) ?? {})
         let deleted = pruneTombstones({ ...((result[DELETED_KEY] as Record<string, number> | undefined) ?? {}), ...deletedNotes })
         for (const notes of Object.values(pages)) for (const note of notes) if (note.updatedAt > (deleted[note.id] ?? 0)) delete deleted[note.id]
         deleted = pruneTombstones(deleted)
@@ -203,7 +95,7 @@ function writePages(pages: PageNotes, deletedNotes: Record<string, number> = {})
     }
     if (typeof chrome !== 'undefined' && chrome.runtime) { reject(new Error('Chrome storage is unavailable. Reload DevNotes and refresh this page.')); return }
     try {
-      const current = migratePages(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}'))
+      const current = migratePages<Note>(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}'))
       let deleted = pruneTombstones({ ...JSON.parse(localStorage.getItem(DELETED_KEY) ?? '{}'), ...deletedNotes })
       for (const notes of Object.values(pages)) for (const note of notes) if (note.updatedAt > (deleted[note.id] ?? 0)) delete deleted[note.id]
       deleted = pruneTombstones(deleted)
@@ -515,71 +407,8 @@ function wrapTextOffsets(nodes: Text[], start: number, end: number, id: string, 
   }
 }
 
-function editDistanceWithin(left: string, right: string, limit: number) {
-  if (Math.abs(left.length - right.length) > limit) return limit + 1
-  let previous = Array.from({ length: right.length + 1 }, (_, index) => index)
-  for (let row = 1; row <= left.length; row++) {
-    const current = [row]
-    let min = row
-    for (let col = 1; col <= right.length; col++) {
-      const value = Math.min(current[col - 1] + 1, previous[col] + 1, previous[col - 1] + (left[row - 1] === right[col - 1] ? 0 : 1))
-      current[col] = value
-      min = Math.min(min, value)
-    }
-    if (min > limit) return limit + 1
-    previous = current
-  }
-  return previous[right.length]
-}
-
-function findBestAnchor(pageText: string, item: Pick<Highlight, 'text' | 'prefix' | 'suffix'>) {
-  const scoreContext = (index: number) => {
-    const before = pageText.slice(Math.max(0, index - item.prefix.length), index)
-    const after = pageText.slice(index + item.text.length, index + item.text.length + item.suffix.length)
-    let prefixScore = 0
-    while (prefixScore < before.length && prefixScore < item.prefix.length && before[before.length - 1 - prefixScore] === item.prefix[item.prefix.length - 1 - prefixScore]) prefixScore++
-    let suffixScore = 0
-    while (suffixScore < after.length && suffixScore < item.suffix.length && after[suffixScore] === item.suffix[suffixScore]) suffixScore++
-    return prefixScore + suffixScore
-  }
-  let best = -1
-  let bestScore = -1
-  let index = pageText.indexOf(item.text)
-  while (index >= 0) {
-    const score = scoreContext(index)
-    if (score > bestScore) { best = index; bestScore = score }
-    index = pageText.indexOf(item.text, index + 1)
-  }
-  if (best >= 0 || item.text.length > 1000) return best
-
-  const tolerance = Math.max(2, Math.floor(item.text.length * 0.08))
-  const sampleSize = Math.min(18, item.text.length)
-  const candidates = new Set<number>()
-  for (const sampleStart of [0, Math.floor((item.text.length - sampleSize) / 2), item.text.length - sampleSize]) {
-    const sample = item.text.slice(sampleStart, sampleStart + sampleSize)
-    let found = pageText.indexOf(sample)
-    let count = 0
-    while (found >= 0 && count++ < 40) {
-      const candidate = found - sampleStart
-      if (candidate >= 0 && candidate + item.text.length <= pageText.length) candidates.add(candidate)
-      found = pageText.indexOf(sample, found + 1)
-    }
-  }
-  let bestDistance = tolerance + 1
-  for (const candidate of candidates) {
-    const distance = editDistanceWithin(item.text, pageText.slice(candidate, candidate + item.text.length), tolerance)
-    if (distance > tolerance) continue
-    const score = scoreContext(candidate) - distance * 2
-    if (score > bestScore || (score === bestScore && distance < bestDistance)) {
-      best = candidate
-      bestScore = score
-      bestDistance = distance
-    }
-  }
-  return best
-}
-
-function applyHighlights(highlights: Highlight[], clearExisting = true): string[] {
+// eslint-disable-next-line react/only-export-components
+export function applyHighlights(highlights: Highlight[], clearExisting = true): string[] {
   if (!document.body) return []
   if (clearExisting) clearPageHighlights()
   const orphaned: string[] = []
@@ -629,21 +458,6 @@ function renderNoteMarkdown(source: string): string {
   return template.innerHTML
 }
 
-function TagInput({ tags, onCommit }: { tags: string[]; onCommit: (tags: string[]) => void }) {
-  const [draft, setDraft] = useState(tags.join(', '))
-
-  const commit = (leaveSeparator = false) => {
-    const next = [...new Map(draft.split(',').map((tag) => tag.trim()).filter(Boolean).map((tag) => [tag.toLowerCase(), tag])).values()]
-    if (next.length !== tags.length || next.some((tag, index) => tag !== tags[index])) onCommit(next)
-    setDraft(next.join(', ') + (leaveSeparator && next.length ? ', ' : ''))
-  }
-
-  return <input className="dn-tags" aria-label="Note tags" placeholder="Add tags, separated by commas" value={draft} onChange={(event) => setDraft(event.target.value)} onBlur={() => commit()} onKeyDown={(event) => {
-    if (event.key === ',') { event.preventDefault(); commit(true) }
-    if (event.key === 'Enter') { event.preventDefault(); commit() }
-  }} />
-}
-
 function getRangeFromPoint(x: number, y: number): Range | null {
   if (typeof document.caretRangeFromPoint === 'function') {
     return document.caretRangeFromPoint(x, y)
@@ -680,169 +494,6 @@ function findNearestTextAnchor(clientX: number, clientY: number): { text: string
   const prefix = pageText.slice(Math.max(0, start - 80), start)
   const suffix = pageText.slice(end, Math.min(pageText.length, end + 80))
   return { text, prefix, suffix, start, end }
-}
-
-// Older versions stored the highlighted text and a source link inside the note body.
-// Hide those lines so annotation notes only show what the user actually wrote.
-const LEGACY_LINE = /^\s*(?:>\s|Source:|—\s*\[)/i
-
-function cleanNoteBody(body: string) {
-  return body.split('\n').filter((line) => !LEGACY_LINE.test(line)).join('\n').replace(/\n{3,}/g, '\n\n')
-}
-
-const CARD_TASK_LINE = /^\s*[-*+]\s+\[([ xX])\]\s*(.*)$/
-
-function renderInline(text: string) {
-  return text.split(/(\*\*[^*]+\*\*)/g).map((part, index) => part.length > 4 && part.startsWith('**') && part.endsWith('**') ? <b key={index}>{part.slice(2, -2)}</b> : part)
-}
-
-function CardBody({ body, editing, onChange, onEditingChange, onToggleTask }: {
-  body: string
-  editing: boolean
-  onChange: (text: string) => void
-  onEditingChange: (editing: boolean) => void
-  onToggleTask: (taskIndex: number, done: boolean) => void
-}) {
-  const ref = useRef<HTMLTextAreaElement>(null)
-  const [draft, setDraft] = useState(body)
-  const [lastPropBody, setLastPropBody] = useState(body)
-
-  if (!editing && body !== lastPropBody) {
-    setLastPropBody(body)
-    setDraft(body)
-  }
-
-  const reading = !editing && draft.trim().length > 0
-
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (!el) return
-    el.style.height = '0px'
-    el.style.height = `${el.scrollHeight}px`
-  }, [draft, reading])
-
-  useEffect(() => {
-    if (editing) ref.current?.focus()
-  }, [editing])
-
-  if (reading) {
-    const lines = draft.split('\n')
-    return <div className="dn-card-read" onClick={() => onEditingChange(true)}>
-      {lines.map((line, index) => {
-        const task = line.match(CARD_TASK_LINE)
-        if (task) {
-          const current = lines.slice(0, index).filter((previous) => CARD_TASK_LINE.test(previous)).length
-          const done = task[1] !== ' '
-          return <label key={index} className="dn-card-task" onClick={(event) => event.stopPropagation()}>
-            <input type="checkbox" checked={done} onChange={(event) => onToggleTask(current, event.target.checked)} />
-            <span className={done ? 'done' : ''}>{task[2]}</span>
-          </label>
-        }
-        return line.trim() ? <p key={index}>{renderInline(line)}</p> : null
-      })}
-    </div>
-  }
-
-  return <textarea
-    ref={ref}
-    className="dn-card-input"
-    value={draft}
-    rows={1}
-    placeholder="Write a note…"
-    aria-label="Annotation note"
-    onChange={(event) => {
-      const val = event.target.value
-      setDraft(val)
-      onChange(val)
-    }}
-    onFocus={() => onEditingChange(true)}
-    onBlur={() => {
-      onEditingChange(false)
-      onChange(draft)
-    }}
-    onKeyDown={(event) => {
-      event.stopPropagation()
-      if (event.key === 'Escape') event.currentTarget.blur()
-    }}
-    onKeyUp={(event) => event.stopPropagation()}
-    onKeyPress={(event) => event.stopPropagation()}
-  />
-}
-
-function AnnotationCard({ item, x, y, body, editing, penSet, noteFont, onChange, onEditingChange, onToggleTask, onColor, onOpen, onRemove, onMove, themeMode }: {
-  item: Highlight
-  x: number
-  y: number
-  body: string
-  editing: boolean
-  penSet: string
-  noteFont: string
-  onChange: (text: string) => void
-  onEditingChange: (editing: boolean) => void
-  onToggleTask: (taskIndex: number, done: boolean) => void
-  onColor: () => void
-  onOpen: () => void
-  onRemove: () => void
-  onMove?: (pageX: number, pageY: number) => void
-  themeMode: 'light' | 'dark' | 'sepia'
-}) {
-  const dragOffset = useRef<{ x: number; y: number } | null>(null)
-  const isDragging = useRef(false)
-  const style = {
-    left: x,
-    top: y,
-    '--accent': item.color === 'transparent' ? 'var(--dn-accent)' : item.color,
-  } as CSSProperties
-
-  return <section
-    className={`dn-card dn-pen-${penSet} dn-font-${noteFont} ${themeMode === 'dark' ? 'dn-dark' : themeMode === 'sepia' ? 'dn-theme-sepia' : ''}`}
-    style={style}
-    aria-label="Note"
-  >
-    <div
-      className="dn-card-header"
-      role="presentation"
-      title="Drag to place anywhere"
-      onPointerDown={(event) => {
-        if ((event.target as HTMLElement).closest('button, input, textarea')) return
-        event.preventDefault()
-        event.currentTarget.setPointerCapture(event.pointerId)
-        dragOffset.current = { x: event.pageX - x, y: event.pageY - y }
-        isDragging.current = true
-      }}
-      onPointerMove={(event) => {
-        if (isDragging.current && dragOffset.current) {
-          onMove?.(Math.max(8, event.pageX - dragOffset.current.x), Math.max(8, event.pageY - dragOffset.current.y))
-        }
-      }}
-      onPointerUp={(event) => {
-        if (isDragging.current) {
-          try { event.currentTarget.releasePointerCapture(event.pointerId) } catch { /* ignore */ }
-          dragOffset.current = null
-          isDragging.current = false
-        }
-      }}
-      onPointerCancel={(event) => {
-        if (isDragging.current) {
-          try { event.currentTarget.releasePointerCapture(event.pointerId) } catch { /* ignore */ }
-          dragOffset.current = null
-          isDragging.current = false
-        }
-      }}
-    >
-      <span className="dn-card-badge">NOTE</span>
-      <span className="dn-card-drag-hint">⋮⋮ Drag</span>
-    </div>
-    <CardBody body={body} editing={editing} onChange={onChange} onEditingChange={onEditingChange} onToggleTask={onToggleTask} />
-    <div className="dn-card-actions">
-      <button type="button" aria-label="Change colour" title="Change colour" onMouseDown={(event) => event.preventDefault()} onClick={onColor}>
-        <i style={{ background: item.color === 'transparent' ? '#5c7049' : item.color }} />
-      </button>
-      <button type="button" onClick={() => onEditingChange(true)}>Edit</button>
-      <button type="button" onClick={onOpen}>Open</button>
-      <button type="button" aria-label="Delete annotation" title="Delete annotation" onClick={onRemove}>Delete</button>
-    </div>
-  </section>
 }
 
 type SearchQuery = { terms: string[]; tags: string[]; sites: string[]; flags: string[]; after?: number; before?: number }
@@ -905,7 +556,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   const [personalizeOpen, setPersonalizeOpen] = useState(false)
   const [settings, setSettings] = useState<DevNotesSettings>(DEFAULT_SETTINGS)
   const [settingsReady, setSettingsReady] = useState(false)
-  const [systemDark, setSystemDark] = useState(() => window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false)
+  const systemDark = useSystemTheme()
   const [pageUrl, setPageUrl] = useState(() => normalizePageUrl(location.href))
   const [pageTitle, setPageTitle] = useState(() => document.title || location.hostname)
   const [pages, setPages] = useState<PageNotes>({})
@@ -1078,14 +729,6 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     }, 250)
     return () => window.clearTimeout(timer)
   }, [settings, settingsReady])
-
-  useEffect(() => {
-    const media = window.matchMedia?.('(prefers-color-scheme: dark)')
-    if (!media) return
-    const update = () => setSystemDark(media.matches)
-    media.addEventListener('change', update)
-    return () => media.removeEventListener('change', update)
-  }, [])
 
   useEffect(() => {
     const interval = window.setInterval(() => {

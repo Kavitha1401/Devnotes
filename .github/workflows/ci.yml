@@ -14,5 +14,10 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - run: npx playwright install --with-deps chromium
       - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test:unit
+      - run: npm run check:contrast
       - run: npm run build
+      - run: xvfb-run -a npm run test:e2e
