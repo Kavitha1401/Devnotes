@@ -8,6 +8,7 @@
     "build:content": "vite build --config vite.content.config.ts",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
     "lint": "oxlint src public/serviceWorker.js",
+    "check:contrast": "node scripts/check-theme-contrast.mjs",
     "build": "npm run typecheck && npm run build:popup && npm run build:content"
   },
   "dependencies": {

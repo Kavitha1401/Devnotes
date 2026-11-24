@@ -417,12 +417,32 @@ function pageTextOffset(nodes: Text[], container: Node, offset: number): number 
   return total
 }
 
-function highlightStyle(shape: Highlight['shape'], color: string) {
+function isDarkPageSurface(node: Element | null) {
+  let current: Element | null = node
+  while (current) {
+    const background = getComputedStyle(current).backgroundColor
+    const match = background.match(/rgba?\((\d+)[,\s]+(\d+)[,\s]+(\d+)(?:[,\s/]+([\d.]+))?\)/)
+    if (match && Number(match[4] ?? 1) > 0.08) {
+      const channel = (value: string) => {
+        const normalized = Number(value) / 255
+        return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4
+      }
+      const luminance = 0.2126 * channel(match[1]) + 0.7152 * channel(match[2]) + 0.0722 * channel(match[3])
+      return luminance < 0.28
+    }
+    current = current.parentElement
+  }
+  return false
+}
+
+function highlightStyle(shape: Highlight['shape'], color: string, darkSurface = false) {
   if (shape === 'none' || color === 'transparent') return 'background:transparent; color:inherit;'
-  if (shape === 'underline') return `background:transparent; color:inherit; text-decoration:underline wavy ${color}; text-decoration-thickness:2px; text-underline-offset:3px;`
+  if (shape === 'underline') return `background:transparent; color:inherit; text-decoration:underline wavy ${darkSurface ? `color-mix(in srgb, ${color} 55%, white)` : color}; text-decoration-thickness:2px; text-underline-offset:3px;`
   if (shape === 'box') return `background:transparent; color:inherit; outline:1px solid ${color}; outline-offset:1px; border-radius:3px;`
   if (shape === 'bracket') return `background:transparent; color:inherit; border-left:2px solid ${color}; border-right:2px solid ${color}; padding:0 2px;`
-  return `background:${color}; color:inherit; border-radius:2px; padding:0 1px;`
+  return darkSurface
+    ? `background:color-mix(in srgb, ${color} 24%, transparent); color:#fff; border-radius:2px; padding:0 1px;`
+    : `background:${color}; color:#182018; border-radius:2px; padding:0 1px;`
 }
 
 function wrapTextOffsets(nodes: Text[], start: number, end: number, id: string, color: string, shape: Highlight['shape'] = 'marker') {
@@ -437,7 +457,7 @@ function wrapTextOffsets(nodes: Text[], start: number, end: number, id: string, 
       range.setEnd(node, to)
       const mark = document.createElement('mark')
       mark.dataset.devnotesHighlight = id
-      mark.style.cssText = `${highlightStyle(shape, color)} color:inherit;`
+      mark.style.cssText = highlightStyle(shape, color, isDarkPageSurface(node.parentElement))
       try { range.surroundContents(mark) } catch { /* Leave text visible if a site mutates the selected node mid-restore. */ }
     }
     offset += text.length
@@ -699,7 +719,7 @@ function CardBody({ body, editing, onChange, onEditingChange, onToggleTask }: {
   />
 }
 
-function AnnotationCard({ item, x, y, body, editing, penSet, noteFont, onChange, onEditingChange, onToggleTask, onColor, onOpen, onRemove, onMove }: {
+function AnnotationCard({ item, x, y, body, editing, penSet, noteFont, onChange, onEditingChange, onToggleTask, onColor, onOpen, onRemove, onMove, themeMode }: {
   item: Highlight
   x: number
   y: number
@@ -714,17 +734,18 @@ function AnnotationCard({ item, x, y, body, editing, penSet, noteFont, onChange,
   onOpen: () => void
   onRemove: () => void
   onMove?: (pageX: number, pageY: number) => void
+  themeMode: 'light' | 'dark' | 'sepia'
 }) {
   const dragOffset = useRef<{ x: number; y: number } | null>(null)
   const isDragging = useRef(false)
   const style = {
     left: x,
     top: y,
-    '--accent': item.color === 'transparent' ? '#5c7049' : item.color,
+    '--accent': item.color === 'transparent' ? 'var(--dn-accent)' : item.color,
   } as CSSProperties
 
   return <section
-    className={`dn-card dn-pen-${penSet} dn-font-${noteFont}`}
+    className={`dn-card dn-pen-${penSet} dn-font-${noteFont} ${themeMode === 'dark' ? 'dn-dark' : themeMode === 'sepia' ? 'dn-theme-sepia' : ''}`}
     style={style}
     aria-label="Note"
   >
@@ -895,6 +916,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   const selected = selectedNotes.find((note) => note.id === selectedId) ?? null
   const hostname = location.hostname.replace(/^www\./, '') || 'This page'
   const darkTheme = settings.theme === 'dark' || (settings.theme === 'system' && systemDark)
+  const effectiveTheme = settings.theme === 'system' ? (darkTheme ? 'dark' : 'light') : settings.theme
 
   useEffect(() => { highlightsRef.current = highlights }, [highlights])
 
@@ -1539,7 +1561,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
 
   const changeHighlightColor = (id: string, color: string) => {
     highlightsDirtyRef.current = true
-    highlightElements(id).forEach((mark) => { mark.style.cssText = `${highlightStyle(highlights.find((item) => item.id === id)?.shape, color)} color:inherit;` })
+    highlightElements(id).forEach((mark) => { mark.style.cssText = highlightStyle(highlights.find((item) => item.id === id)?.shape, color, isDarkPageSurface(mark.parentElement)) })
     setHighlights((items) => items.map((item) => item.id === id ? { ...item, color } : item))
   }
 
@@ -2024,7 +2046,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   return <>
     {selectionToolbar && (
       <div
-        className="dn-selection-toolbar"
+        className={`dn-selection-toolbar ${effectiveTheme === 'dark' ? 'dn-dark' : effectiveTheme === 'sepia' ? 'dn-theme-sepia' : ''}`}
         style={{ left: selectionToolbar.x, top: selectionToolbar.y }}
         onPointerDown={(event) => event.stopPropagation()}
         onMouseDown={(event) => {
@@ -2166,6 +2188,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
           editing={editingId === item.id}
           penSet={settings.penSet}
           noteFont={settings.noteFont}
+          themeMode={effectiveTheme}
           onChange={(text) => setAnnotationText(item, text)}
           onEditingChange={(on) => setEditing(item.id, on)}
           onToggleTask={(index, done) => { if (note) toggleInlineTask(note.id, index, done) }}
@@ -2200,7 +2223,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     </div>
 
     {/* Fixed rail minimap */}
-    <div className="dn-annotation-rail" aria-label="Page annotations">
+    <div className={`dn-annotation-rail ${effectiveTheme === 'dark' ? 'dn-dark' : effectiveTheme === 'sepia' ? 'dn-theme-sepia' : ''}`} aria-label="Page annotations">
       {annotationPlacements.map(({ item, rect }) => {
         const docHeight = Math.max(1, document.documentElement.scrollHeight, document.body?.scrollHeight ?? 1)
         const pct = Math.max(1, Math.min(99, (rect.top / docHeight) * 100))
@@ -2209,7 +2232,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
             key={item.id}
             style={{
               top: `${pct}%`,
-              background: item.color === 'transparent' ? '#5c7049' : item.color,
+              background: darkTheme ? 'var(--dn-accent)' : item.color === 'transparent' ? 'var(--dn-accent)' : item.color,
             }}
             title={item.text ? `Jump to: “${item.text.slice(0, 35)}${item.text.length > 35 ? '…' : ''}”` : 'Jump to highlight'}
             aria-label="Jump to highlight"
@@ -2219,12 +2242,12 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       })}
     </div>
 
-    {!open && !settings.hideLauncher && <button className={`dn-launcher ${settings.launcherPosition === 'bottom-left' ? 'dn-launcher-left' : ''}`} onClick={() => setOpen(true)} aria-label="Open DevNotes" title="DevNotes"><span className="dn-mark">d<span>.</span></span></button>}
+    {!open && !settings.hideLauncher && <button className={`dn-launcher ${settings.launcherPosition === 'bottom-left' ? 'dn-launcher-left' : ''} ${effectiveTheme === 'dark' ? 'dn-dark' : effectiveTheme === 'sepia' ? 'dn-theme-sepia' : ''}`} onClick={() => setOpen(true)} aria-label="Open DevNotes" title="DevNotes"><span className="dn-mark">d<span>.</span></span></button>}
 
-    <aside className={`dn-panel dn-paper-${settings.paperTone} dn-font-${settings.noteFont} ${libraryOpen ? 'dn-library-open' : 'dn-page-view'} ${open ? 'is-open' : ''} ${settings.panelSide === 'left' ? 'dn-panel-left' : ''} ${darkTheme || settings.paperTone === 'night' ? 'dn-dark' : ''}`} style={{ width: `min(${settings.panelWidth}px, 100vw)`, left: settings.panelSide === 'left' ? 0 : 'auto', right: settings.panelSide === 'right' ? 0 : 'auto' }} aria-label="DevNotes panel" aria-hidden={!open}>
+    <aside className={`dn-panel dn-theme-${effectiveTheme} dn-font-${settings.noteFont} ${libraryOpen ? 'dn-library-open' : 'dn-page-view'} ${open ? 'is-open' : ''} ${settings.panelSide === 'left' ? 'dn-panel-left' : ''} ${darkTheme ? 'dn-dark' : ''}`} style={{ width: `min(${settings.panelWidth}px, 100vw)`, left: settings.panelSide === 'left' ? 0 : 'auto', right: settings.panelSide === 'right' ? 0 : 'auto', '--dn-text-scale': settings.textSize === 'small' ? 0.92 : settings.textSize === 'large' ? 1.15 : 1 } as CSSProperties} aria-label="DevNotes panel" aria-hidden={!open}>
       <header className="dn-header">
         <div className="dn-brand"><span className="dn-brand-icon">d<span>.</span></span><span>devnotes</span></div>
-        {personalizeOpen && <section className="dn-personalize" role="dialog" aria-label="Annotation appearance"><div><strong>Annotation appearance</strong><button className="dn-icon-button" onClick={() => setPersonalizeOpen(false)} aria-label="Close annotation appearance">×</button></div><label>Highlight shape<select value={settings.highlightStyle} onChange={(event) => updateSettings({ highlightStyle: event.target.value as DevNotesSettings['highlightStyle'] })}><option value="marker">Marker fill</option><option value="underline">Wavy question</option><option value="box">Box reminder</option><option value="bracket">Margin bracket</option></select></label><label>Pen set<select value={settings.penSet} onChange={(event) => updateSettings({ penSet: event.target.value as DevNotesSettings['penSet'] })}><option value="marker">Marker</option><option value="pencil">Pencil</option><option value="fountain">Fountain pen</option></select></label><label>Paper tone<select value={settings.paperTone} onChange={(event) => updateSettings({ paperTone: event.target.value as DevNotesSettings['paperTone'] })}><option value="cream">Cream</option><option value="sepia">Sepia</option><option value="grey">Grey</option><option value="night">Night</option></select></label><label>Note font<select value={settings.noteFont} onChange={(event) => updateSettings({ noteFont: event.target.value as DevNotesSettings['noteFont'] })}><option value="serif">Book serif</option><option value="handwriting">Handwriting</option><option value="mono">Monospace</option></select></label></section>}
+        {personalizeOpen && <section className="dn-personalize" role="dialog" aria-label="Annotation appearance"><div><strong>Annotation appearance</strong><button className="dn-icon-button" onClick={() => setPersonalizeOpen(false)} aria-label="Close annotation appearance">×</button></div><label>Highlight shape<select value={settings.highlightStyle} onChange={(event) => updateSettings({ highlightStyle: event.target.value as DevNotesSettings['highlightStyle'] })}><option value="marker">Marker fill</option><option value="underline">Wavy question</option><option value="box">Box reminder</option><option value="bracket">Margin bracket</option></select></label><label>Pen set<select value={settings.penSet} onChange={(event) => updateSettings({ penSet: event.target.value as DevNotesSettings['penSet'] })}><option value="marker">Marker</option><option value="pencil">Pencil</option><option value="fountain">Fountain pen</option></select></label><label>Note font<select value={settings.noteFont} onChange={(event) => updateSettings({ noteFont: event.target.value as DevNotesSettings['noteFont'] })}><option value="serif">Book serif</option><option value="handwriting">Handwriting</option><option value="mono">Monospace</option></select></label></section>}
         <button className="dn-icon-button" onClick={() => setPersonalizeOpen(true)} aria-label="Personalize annotations" title="Annotation styles">◐</button>
         <button className="dn-library-toggle" onClick={() => { const next = !libraryOpen; setLibraryOpen(next); setShowAllNotes(next); if (!next) { setShowArchived(false); setShowFavorites(false); setShowTasks(false); setShowTrash(false) } }}>{libraryOpen ? 'This page' : 'Library'}</button>
         <button className="dn-icon-button dn-site-disable" onClick={() => void disableOnThisSite()} aria-label={`Disable DevNotes on ${hostname}`} title="Disable on this site">◉</button>
@@ -2235,7 +2258,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       {(runtimeInvalid || saveState === 'error') && <div className="dn-recovery-banner" role="alert"><span>{runtimeInvalid ? 'DevNotes was updated, reload this tab.' : 'DevNotes could not save. Your text is still in memory.'}</span><button onClick={() => void copyUnsavedText()}>Copy notes</button></div>}
       {incognitoMode && <div className="dn-privacy-banner" role="status">Incognito mode: notes stay in memory for this tab.</div>}
 
-      {settingsOpen && <section className="dn-settings" role="dialog" aria-label="DevNotes settings"><div className="dn-settings-heading"><div><strong>Settings</strong><span>Preferences are stored on this device.</span></div><button className="dn-icon-button" onClick={() => setSettingsOpen(false)} aria-label="Close settings">×</button></div><div className="dn-settings-content"><label>Theme<select value={settings.theme} onChange={(event) => updateSettings({ theme: event.target.value as DevNotesSettings['theme'] })}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label><label>Selection toolbar<select value={settings.toolbarBehavior} onChange={(event) => updateSettings({ toolbarBehavior: event.target.value as DevNotesSettings["toolbarBehavior"] })}><option value="always">Always</option><option value="hold-alt">Hold Alt</option><option value="never">Never</option></select></label><label>Panel side<select value={settings.panelSide} onChange={(event) => updateSettings({ panelSide: event.target.value as DevNotesSettings['panelSide'] })}><option value="right">Right</option><option value="left">Left</option></select></label><label>Panel width <span>{settings.panelWidth}px</span><input type="range" min="360" max="720" step="10" value={settings.panelWidth} onChange={(event) => updateSettings({ panelWidth: Number(event.target.value) })} /></label><label>Launcher position<select value={settings.launcherPosition} onChange={(event) => updateSettings({ launcherPosition: event.target.value as DevNotesSettings['launcherPosition'] })}><option value="bottom-right">Bottom right</option><option value="bottom-left">Bottom left</option></select></label><label className="dn-settings-check"><input type="checkbox" checked={settings.hideLauncher} onChange={(event) => updateSettings({ hideLauncher: event.target.checked })} />Hide the floating launcher</label><fieldset><legend>Default highlight color</legend><div className="dn-setting-colors">{HIGHLIGHT_COLORS.map((color) => <button key={color} type="button" className={settings.highlightColor === color ? 'selected' : ''} style={{ background: color }} aria-label={`Use highlight color ${color}`} onClick={() => updateSettings({ highlightColor: color })} />)}</div></fieldset><label>Trash retention <span>{settings.trashRetentionDays} days</span><input type="range" min="30" max="3650" step="30" value={settings.trashRetentionDays} onChange={(event) => updateSettings({ trashRetentionDays: Number(event.target.value) })} /></label><label>Version history <span>{settings.historyDepth} versions</span><input type="range" min="1" max="100" value={settings.historyDepth} onChange={(event) => updateSettings({ historyDepth: Number(event.target.value) })} /></label><div className="dn-site-settings"><strong>This site · {hostname}</strong><button onClick={() => void disableOnThisSite()}>Disable DevNotes on this site</button></div><form className="dn-blocklist-add" onSubmit={(event) => { event.preventDefault(); addBlockedHost(blocklistDraft); setBlocklistDraft('') }}><label htmlFor="dn-block-host">Block another site</label><div><input id="dn-block-host" value={blocklistDraft} onChange={(event) => setBlocklistDraft(event.target.value)} placeholder="example.com" /><button type="submit">Add</button></div></form><div className="dn-blocklist"><strong>Blocked sites</strong>{settings.disabledHosts.length ? settings.disabledHosts.map((host) => <div key={host}><span>{host}</span><button aria-label={`Unblock ${host}`} onClick={() => allowHost(host)}>Allow</button></div>) : <small>No custom sites blocked.</small>}<strong>Default protected sites</strong>{DEFAULT_BLOCKED_HOSTS.map((host) => { const allowed = settings.enabledHosts.some((rule) => hostMatches(hostname, rule)) && hostMatches(hostname, host); return <div key={host}><span>{host}</span><button aria-label={`${allowed ? 'Block' : 'Allow'} DevNotes on ${host}`} onClick={() => allowed ? addBlockedHost(host) : allowHost(host)}>{allowed ? 'Block' : 'Allow'}</button></div> })}</div></div></section>}
+      {settingsOpen && <section className="dn-settings" role="dialog" aria-label="DevNotes settings"><div className="dn-settings-heading"><div><strong>Settings</strong><span>Preferences are stored on this device.</span></div><button className="dn-icon-button" onClick={() => setSettingsOpen(false)} aria-label="Close settings">×</button></div><div className="dn-settings-content"><label>Theme<select value={settings.theme} onChange={(event) => updateSettings({ theme: event.target.value as DevNotesSettings['theme'] })}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option><option value="sepia">Sepia</option></select></label><label>Selection toolbar<select value={settings.toolbarBehavior} onChange={(event) => updateSettings({ toolbarBehavior: event.target.value as DevNotesSettings["toolbarBehavior"] })}><option value="always">Always</option><option value="hold-alt">Hold Alt</option><option value="never">Never</option></select></label><label>Text size<select value={settings.textSize} onChange={(event) => updateSettings({ textSize: event.target.value as DevNotesSettings["textSize"] })}><option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option></select></label><label>Panel side<select value={settings.panelSide} onChange={(event) => updateSettings({ panelSide: event.target.value as DevNotesSettings['panelSide'] })}><option value="right">Right</option><option value="left">Left</option></select></label><label>Panel width <span>{settings.panelWidth}px</span><input type="range" min="360" max="720" step="10" value={settings.panelWidth} onChange={(event) => updateSettings({ panelWidth: Number(event.target.value) })} /></label><label>Launcher position<select value={settings.launcherPosition} onChange={(event) => updateSettings({ launcherPosition: event.target.value as DevNotesSettings['launcherPosition'] })}><option value="bottom-right">Bottom right</option><option value="bottom-left">Bottom left</option></select></label><label className="dn-settings-check"><input type="checkbox" checked={settings.hideLauncher} onChange={(event) => updateSettings({ hideLauncher: event.target.checked })} />Hide the floating launcher</label><fieldset><legend>Default highlight color</legend><div className="dn-setting-colors">{HIGHLIGHT_COLORS.map((color) => <button key={color} type="button" className={settings.highlightColor === color ? 'selected' : ''} style={{ background: color }} aria-label={`Use highlight color ${color}`} onClick={() => updateSettings({ highlightColor: color })} />)}</div></fieldset><label>Trash retention <span>{settings.trashRetentionDays} days</span><input type="range" min="30" max="3650" step="30" value={settings.trashRetentionDays} onChange={(event) => updateSettings({ trashRetentionDays: Number(event.target.value) })} /></label><label>Version history <span>{settings.historyDepth} versions</span><input type="range" min="1" max="100" value={settings.historyDepth} onChange={(event) => updateSettings({ historyDepth: Number(event.target.value) })} /></label><div className="dn-site-settings"><strong>This site · {hostname}</strong><button onClick={() => void disableOnThisSite()}>Disable DevNotes on this site</button></div><form className="dn-blocklist-add" onSubmit={(event) => { event.preventDefault(); addBlockedHost(blocklistDraft); setBlocklistDraft('') }}><label htmlFor="dn-block-host">Block another site</label><div><input id="dn-block-host" value={blocklistDraft} onChange={(event) => setBlocklistDraft(event.target.value)} placeholder="example.com" /><button type="submit">Add</button></div></form><div className="dn-blocklist"><strong>Blocked sites</strong>{settings.disabledHosts.length ? settings.disabledHosts.map((host) => <div key={host}><span>{host}</span><button aria-label={`Unblock ${host}`} onClick={() => allowHost(host)}>Allow</button></div>) : <small>No custom sites blocked.</small>}<strong>Default protected sites</strong>{DEFAULT_BLOCKED_HOSTS.map((host) => { const allowed = settings.enabledHosts.some((rule) => hostMatches(hostname, rule)) && hostMatches(hostname, host); return <div key={host}><span>{host}</span><button aria-label={`${allowed ? 'Block' : 'Allow'} DevNotes on ${host}`} onClick={() => allowed ? addBlockedHost(host) : allowHost(host)}>{allowed ? 'Block' : 'Allow'}</button></div> })}</div></div></section>}
 
       <div className="dn-page">
         <div className="dn-site-icon">{hostname[0]?.toUpperCase()}</div>

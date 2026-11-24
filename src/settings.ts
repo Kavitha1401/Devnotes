@@ -4,7 +4,7 @@ export const HIGHLIGHT_COLORS = ['#f6e58d', '#c8e6a0', '#b7dff2', '#f2c5d2'] as 
 export type DevNotesSettings = {
   disabledHosts: string[]
   enabledHosts: string[]
-  theme: 'light' | 'dark' | 'system'
+  theme: 'light' | 'dark' | 'system' | 'sepia'
   panelSide: 'left' | 'right'
   panelWidth: number
   launcherPosition: 'bottom-left' | 'bottom-right'
@@ -14,9 +14,9 @@ export type DevNotesSettings = {
   historyDepth: number
   highlightStyle: 'marker' | 'underline' | 'box' | 'bracket'
   penSet: 'marker' | 'pencil' | 'fountain'
-  paperTone: 'cream' | 'sepia' | 'grey' | 'night'
   noteFont: 'serif' | 'handwriting' | 'mono'
   toolbarBehavior: 'always' | 'hold-alt' | 'never'
+  textSize: 'small' | 'medium' | 'large'
 }
 
 export const DEFAULT_SETTINGS: DevNotesSettings = {
@@ -32,9 +32,9 @@ export const DEFAULT_SETTINGS: DevNotesSettings = {
   historyDepth: 20,
   highlightStyle: 'marker',
   penSet: 'marker',
-  paperTone: 'cream',
   noteFont: 'serif',
   toolbarBehavior: 'always',
+  textSize: 'medium',
 }
 
 export const DEFAULT_BLOCKED_HOSTS = [
@@ -56,13 +56,13 @@ export function normalizeHost(host: string): string {
 }
 
 export function normalizeSettings(value: unknown): DevNotesSettings {
-  const raw = typeof value === 'object' && value !== null ? value as Partial<DevNotesSettings> : {}
+  const raw = typeof value === 'object' && value !== null ? value as Partial<DevNotesSettings> & { paperTone?: string } : {}
   const strings = (items: unknown) => Array.isArray(items) ? items.filter((item): item is string => typeof item === 'string').map((item) => item.trim().startsWith('*.') ? `*.${normalizeHost(item.slice(2))}` : normalizeHost(item)).filter(Boolean) : []
   return {
     ...DEFAULT_SETTINGS,
     disabledHosts: [...new Set(strings(raw.disabledHosts))],
     enabledHosts: [...new Set(strings(raw.enabledHosts))],
-    theme: raw.theme === 'light' || raw.theme === 'dark' ? raw.theme : 'system',
+    theme: raw.theme === 'light' || raw.theme === 'dark' || raw.theme === 'sepia' ? raw.theme : raw.paperTone === 'sepia' ? 'sepia' : raw.paperTone === 'night' ? 'dark' : 'system',
     panelSide: raw.panelSide === 'left' ? 'left' : 'right',
     panelWidth: typeof raw.panelWidth === 'number' ? Math.min(720, Math.max(360, Math.round(raw.panelWidth))) : DEFAULT_SETTINGS.panelWidth,
     launcherPosition: raw.launcherPosition === 'bottom-left' ? 'bottom-left' : 'bottom-right',
@@ -72,9 +72,9 @@ export function normalizeSettings(value: unknown): DevNotesSettings {
     historyDepth: typeof raw.historyDepth === 'number' ? Math.min(100, Math.max(1, Math.round(raw.historyDepth))) : DEFAULT_SETTINGS.historyDepth,
     highlightStyle: ['marker', 'underline', 'box', 'bracket'].includes(raw.highlightStyle as string) ? raw.highlightStyle as DevNotesSettings['highlightStyle'] : DEFAULT_SETTINGS.highlightStyle,
     penSet: ['marker', 'pencil', 'fountain'].includes(raw.penSet as string) ? raw.penSet as DevNotesSettings['penSet'] : DEFAULT_SETTINGS.penSet,
-    paperTone: ['cream', 'sepia', 'grey', 'night'].includes(raw.paperTone as string) ? raw.paperTone as DevNotesSettings['paperTone'] : DEFAULT_SETTINGS.paperTone,
     noteFont: ['serif', 'handwriting', 'mono'].includes(raw.noteFont as string) ? raw.noteFont as DevNotesSettings['noteFont'] : DEFAULT_SETTINGS.noteFont,
     toolbarBehavior: ['always', 'hold-alt', 'never'].includes(raw.toolbarBehavior as string) ? raw.toolbarBehavior as DevNotesSettings['toolbarBehavior'] : DEFAULT_SETTINGS.toolbarBehavior,
+    textSize: ['small', 'medium', 'large'].includes(raw.textSize as string) ? raw.textSize as DevNotesSettings['textSize'] : DEFAULT_SETTINGS.textSize,
   }
 }
 
