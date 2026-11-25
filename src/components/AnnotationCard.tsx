@@ -6,9 +6,10 @@ const CARD_TASK_LINE = /^\s*[-*+]\s+\[([ xX])\]\s*(.*)$/
 
 const CATEGORY_CONFIG: Record<NoteCategory, { label: string; color: string }> = {
   general: { label: 'Note', color: '#64748b' },
+  todo: { label: 'To-do', color: '#10b981' },
   idea: { label: 'Idea', color: '#f59e0b' },
   remember: { label: 'Remember', color: '#3b82f6' },
-  question: { label: 'Question', color: '#8b5cf6' },
+  question: { label: 'Question', color: '#ec4899' },
 }
 
 function renderInline(text: string) {
@@ -130,7 +131,7 @@ export function AnnotationCard({
   const config = CATEGORY_CONFIG[currentCategory]
 
   const cycleCategory = () => {
-    const list: NoteCategory[] = ['idea', 'remember', 'question', 'general']
+    const list: NoteCategory[] = ['general', 'todo', 'idea', 'remember', 'question']
     const next = list[(list.indexOf(currentCategory) + 1) % list.length]
     onCategoryChange?.(next)
   }
@@ -180,7 +181,7 @@ export function AnnotationCard({
       <button
         type="button"
         className="dn-card-badge-btn"
-        title="Click to switch category: Idea, Remember, Question, Note"
+        title="Click to switch category: Note, To-do, Idea, Remember, Question"
         onClick={(event) => {
           event.stopPropagation()
           cycleCategory()
@@ -205,6 +206,18 @@ export function AnnotationCard({
             Aa
           </button>
         )}
+        <button
+          type="button"
+          className="dn-card-open-btn"
+          title="Open note in side panel"
+          aria-label="Open note in side panel"
+          onClick={(event) => {
+            event.stopPropagation()
+            onOpen()
+          }}
+        >
+          ↗
+        </button>
         <span className="dn-card-drag-hint" title="Drag to move note">⋮⋮</span>
         <button
           type="button"
@@ -221,10 +234,5 @@ export function AnnotationCard({
       </div>
     </div>
     <CardBody body={body} editing={editing} onChange={onChange} onEditingChange={onEditingChange} onToggleTask={onToggleTask} />
-    <div className="dn-card-actions">
-      <button type="button" onClick={() => onEditingChange(true)}>Edit</button>
-      <button type="button" onClick={onOpen}>Open</button>
-      <button type="button" aria-label="Delete note" title="Delete note" onClick={onRemove}>Delete</button>
-    </div>
   </section>
 }

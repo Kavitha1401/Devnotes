@@ -31,6 +31,7 @@
   --dn-cat-idea: #f59e0b;
   --dn-cat-remember: #6366f1;
   --dn-cat-question: #ec4899;
+  --dn-cat-todo: #10b981;
   --dn-cat-general: #64748b;
 
   /* Active theme references */
@@ -397,6 +398,10 @@ button {
 
 .dn-cat-dot.dn-cat-idea, .dn-cat-idea .dn-cat-dot {
   background: var(--dn-cat-idea);
+}
+
+.dn-cat-dot.dn-cat-todo, .dn-cat-todo .dn-cat-dot {
+  background: var(--dn-cat-todo);
 }
 
 .dn-cat-dot.dn-cat-remember, .dn-cat-remember .dn-cat-dot {
@@ -974,6 +979,25 @@ button {
   color: var(--dn-text);
 }
 
+.dn-card-open-btn {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dn-muted);
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.dn-card-open-btn:hover {
+  color: var(--dn-accent);
+}
+
 .dn-card-delete-icon {
   display: grid;
   place-items: center;
@@ -1042,16 +1066,25 @@ button {
   text-decoration: line-through;
 }
 
-/* Font classes */
-.dn-font-serif, .dn-card.dn-font-serif, .dn-panel.dn-font-serif .dn-editor {
+/* Scoped note fonts: ONLY applies to note body/title and card text, NEVER system UI or settings */
+.dn-card.dn-font-serif .dn-card-input,
+.dn-card.dn-font-serif .dn-card-read,
+.dn-editor.dn-font-serif .dn-title,
+.dn-editor.dn-font-serif .dn-body {
   font-family: var(--dn-font-serif);
 }
 
-.dn-font-mono, .dn-card.dn-font-mono, .dn-panel.dn-font-mono .dn-editor {
+.dn-card.dn-font-mono .dn-card-input,
+.dn-card.dn-font-mono .dn-card-read,
+.dn-editor.dn-font-mono .dn-title,
+.dn-editor.dn-font-mono .dn-body {
   font-family: var(--dn-font-mono);
 }
 
-.dn-font-sans, .dn-card.dn-font-sans, .dn-panel.dn-font-sans .dn-editor {
+.dn-card.dn-font-sans .dn-card-input,
+.dn-card.dn-font-sans .dn-card-read,
+.dn-editor.dn-font-sans .dn-title,
+.dn-editor.dn-font-sans .dn-body {
   font-family: var(--dn-font);
 }
 
@@ -1122,6 +1155,50 @@ button {
   background: rgba(239, 68, 68, 0.1) !important;
 }
 
+.dn-collection-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 16px 8px;
+  flex-wrap: wrap;
+}
+
+.dn-collection-bar select, .dn-collection-bar input {
+  height: 30px;
+  border: 1px solid var(--dn-border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: var(--dn-surface);
+  color: var(--dn-text);
+  font-size: 12px;
+}
+
+.dn-collection-bar select {
+  flex: 1;
+  min-width: 120px;
+}
+
+.dn-domain-filter {
+  width: 100px;
+}
+
+.dn-collection-add {
+  border: 1px solid var(--dn-border);
+  border-radius: 6px;
+  background: var(--dn-surface);
+  color: var(--dn-text);
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  flex: 0 0 auto;
+}
+
+.dn-collection-add:hover {
+  background: var(--dn-bg);
+}
+
 /* Settings modal */
 .dn-settings {
   position: absolute;
@@ -1137,16 +1214,24 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
+  padding: 14px 16px;
   border-bottom: 1px solid var(--dn-border);
 }
 
+.dn-settings-heading > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .dn-settings-heading strong {
-  font-size: 14px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--dn-text);
 }
 
 .dn-settings-heading span {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--dn-muted);
 }
 
@@ -1208,9 +1293,33 @@ button {
 }
 
 .dn-site-settings, .dn-blocklist-add, .dn-blocklist {
-  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
   border-top: 1px solid var(--dn-border);
   font-size: 12px;
+}
+
+.dn-site-settings strong, .dn-blocklist strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dn-text);
+  margin-bottom: 2px;
+}
+
+.dn-blocklist > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
+}
+
+.dn-blocklist > small {
+  display: block;
+  color: var(--dn-muted);
+  margin-bottom: 6px;
 }
 
 .dn-site-settings button, .dn-blocklist button, .dn-blocklist-add button {
@@ -1222,73 +1331,7 @@ button {
   font-size: 11px;
 }
 
-/* Toast */
-.dn-undo-toast {
-  position: fixed;
-  z-index: 2147483647;
-  right: 18px;
-  bottom: 18px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border: 1px solid var(--dn-border);
-  border-radius: 8px;
-  background: var(--dn-surface);
-  color: var(--dn-text);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-  font-size: 12px;
-}
 
-.dn-undo-toast button {
-  border: 0;
-  border-radius: 4px;
-  padding: 3px 6px;
-  background: var(--dn-bg);
-  color: var(--dn-accent);
-  font-weight: 600;
-}
-
-/* Orphaned anchors */
-.dn-orphans-card {
-  margin: 0 16px 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--dn-border);
-  border-radius: 8px;
-  background: var(--dn-surface);
-}
-
-.dn-orphans-title {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--dn-muted);
-  margin-bottom: 6px;
-}
-
-.dn-orphan-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 4px 0;
-  font-size: 11px;
-}
-
-.dn-orphan-text {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dn-reattach-btn {
-  border: 1px solid var(--dn-border);
-  border-radius: 4px;
-  padding: 3px 6px;
-  background: var(--dn-bg);
-  font-size: 11px;
-}
 
 /* Print styling */
 @media print {
