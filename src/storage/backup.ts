@@ -30,7 +30,16 @@ export function validateBackup(value: unknown): BackupFile | null {
         const placement: NotePlacement = item.placement && typeof item.placement.dx === 'number' && typeof item.placement.dy === 'number'
           ? { side: item.placement.side === 'left' ? 'left' : 'right', dx: Math.round(item.placement.dx), dy: Math.round(item.placement.dy), manual: Boolean(item.placement.manual) }
           : { side: 'right', dx: 24, dy: 0 }
-        return { ...item, color: HIGHLIGHT_COLORS.includes(item.color as typeof HIGHLIGHT_COLORS[number]) ? item.color : HIGHLIGHT_COLORS[0], shape: ['marker', 'underline', 'box', 'bracket'].includes(item.shape ?? '') ? item.shape : 'marker', display: item.display === 'sticky' ? 'sticky' : 'inline', placement, status: item.status === 'orphan' ? 'orphan' : 'attached', stickyX: undefined, stickyY: undefined }
+        return {
+          ...item,
+          color: [...HIGHLIGHT_COLORS, 'transparent'].includes(item.color as any) ? item.color : '#f6e58d',
+          shape: ['marker', 'underline', 'box', 'bracket', 'none'].includes(item.shape ?? '') ? item.shape : 'marker',
+          display: item.display === 'sticky' ? 'sticky' : 'inline',
+          placement,
+          status: item.status === 'orphan' ? 'orphan' : 'attached',
+          stickyX: undefined,
+          stickyY: undefined,
+        }
       })
     } catch { return null }
   }

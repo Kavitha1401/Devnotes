@@ -1,7 +1,8 @@
 import type { DevNotesSettings } from '../settings'
 
+export type NoteCategory = 'idea' | 'remember' | 'question' | 'general'
 export type Revision = { id: string; title: string; body: string; savedAt: number }
-export type Note = { id: string; title: string; body: string; tags?: string[]; collectionIds?: string[]; pinned?: boolean; favorite?: boolean; archived?: boolean; history?: Revision[]; createdAt: number; updatedAt: number }
+export type Note = { id: string; title: string; body: string; category?: NoteCategory; tags?: string[]; collectionIds?: string[]; pinned?: boolean; favorite?: boolean; archived?: boolean; history?: Revision[]; createdAt: number; updatedAt: number }
 export type PageNotes = Record<string, Note[]>
 export type Collection = { id: string; name: string; createdAt: number }
 export type NotePlacement = { side: 'left' | 'right' | 'inline'; dx: number; dy: number; manual?: boolean }

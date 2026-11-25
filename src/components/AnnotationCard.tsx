@@ -1,8 +1,15 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
-import type { Highlight } from '../storage/types'
+import type { Highlight, NoteCategory } from '../storage/types'
 
 const CARD_TASK_LINE = /^\s*[-*+]\s+\[([ xX])\]\s*(.*)$/
+
+const CATEGORY_CONFIG: Record<NoteCategory, { label: string; icon: string; color: string }> = {
+  general: { label: 'Note', icon: '📝', color: '#64748b' },
+  idea: { label: 'Idea', icon: '💡', color: '#eab308' },
+  remember: { label: 'Remember', icon: '📌', color: '#3b82f6' },
+  question: { label: 'Question', icon: '❓', color: '#ec4899' },
+}
 
 function renderInline(text: string) {
   return text.split(/(\*\*[^*]+\*\*)/g).map((part, index) => part.length > 4 && part.startsWith('**') && part.endsWith('**') ? <b key={index}>{part.slice(2, -2)}</b> : part)
@@ -60,7 +67,7 @@ function CardBody({ body, editing, onChange, onEditingChange, onToggleTask }: {
     className="dn-card-input"
     value={draft}
     rows={1}
-    placeholder="Write a note…"
+    placeholder="Write a note..."
     aria-label="Annotation note"
     onChange={(event) => {
       const val = event.target.value
@@ -81,18 +88,19 @@ function CardBody({ body, editing, onChange, onEditingChange, onToggleTask }: {
   />
 }
 
-export function AnnotationCard({ item, x, y, body, editing, penSet, noteFont, onChange, onEditingChange, onToggleTask, onColor, onOpen, onRemove, onMove, themeMode }: {
+export function AnnotationCard({ item, x, y, body, category = 'general', editing, penSet, noteFont, onChange, onCategoryChange, onEditingChange, onToggleTask, onOpen, onRemove, onMove, themeMode }: {
   item: Highlight
   x: number
   y: number
   body: string
+  category?: NoteCategory
   editing: boolean
   penSet: string
   noteFont: string
   onChange: (text: string) => void
+  onCategoryChange?: (category: NoteCategory) => void
   onEditingChange: (editing: boolean) => void
   onToggleTask: (taskIndex: number, done: boolean) => void
-  onColor: () => void
   onOpen: () => void
   onRemove: () => void
   onMove?: (pageX: number, pageY: number) => void
@@ -100,10 +108,19 @@ export function AnnotationCard({ item, x, y, body, editing, penSet, noteFont, on
 }) {
   const dragOffset = useRef<{ x: number; y: number } | null>(null)
   const isDragging = useRef(false)
+  const currentCategory = category || 'general'
+  const config = CATEGORY_CONFIG[currentCategory]
+
+  const cycleCategory = () => {
+    const list: NoteCategory[] = ['idea', 'remember', 'question', 'general']
+    const next = list[(list.indexOf(currentCategory) + 1) % list.length]
+    onCategoryChange?.(next)
+  }
+
   const style = {
     left: x,
     top: y,
-    '--accent': item.color === 'transparent' ? 'var(--dn-accent)' : item.color,
+    '--accent': config.color || (item.color === 'transparent' ? 'var(--dn-accent)' : item.color),
   } as CSSProperties
 
   return <section
@@ -142,18 +159,36 @@ export function AnnotationCard({ item, x, y, body, editing, penSet, noteFont, on
         }
       }}
     >
-      <span className="dn-card-badge">NOTE</span>
+      <button
+        type="button"
+        className="dn-card-badge-btn"
+        title="Click to switch category: Idea, Remember, Question, Note"
+        onClick={(event) => {
+          event.stopPropagation()
+          cycleCategory()
+        }}
+      >
+        <span>{config.icon}</span> {config.label}
+      </button>
       <span className="dn-card-drag-hint">⋮⋮ Drag</span>
+      <button
+        type="button"
+        className="dn-card-delete-icon"
+        title="Delete this note"
+        aria-label="Delete this note"
+        onClick={(event) => {
+          event.stopPropagation()
+          onRemove()
+        }}
+      >
+        ✕
+      </button>
     </div>
     <CardBody body={body} editing={editing} onChange={onChange} onEditingChange={onEditingChange} onToggleTask={onToggleTask} />
     <div className="dn-card-actions">
-      <button type="button" aria-label="Change colour" title="Change colour" onMouseDown={(event) => event.preventDefault()} onClick={onColor}>
-        <i style={{ background: item.color === 'transparent' ? '#5c7049' : item.color }} />
-      </button>
       <button type="button" onClick={() => onEditingChange(true)}>Edit</button>
-      <button type="button" onClick={onOpen}>Open</button>
-      <button type="button" aria-label="Delete annotation" title="Delete annotation" onClick={onRemove}>Delete</button>
+      <button type="button" onClick={onOpen}>Open in panel</button>
+      <button type="button" aria-label="Delete note" title="Delete note" onClick={onRemove}>Delete</button>
     </div>
   </section>
 }
-

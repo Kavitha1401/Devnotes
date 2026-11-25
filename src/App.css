@@ -749,3 +749,159 @@ button { cursor: pointer; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+.dn-header-btn {
+  border: 1px solid var(--dn-border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--dn-surface);
+  color: var(--dn-text);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: background 0.15s ease;
+}
+.dn-header-btn:hover {
+  background: var(--dn-bg);
+}
+
+.dn-category-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--dn-border);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.dn-category-tabs::-webkit-scrollbar {
+  display: none;
+}
+.dn-category-tab {
+  flex: 1 0 auto;
+  padding: 5px 9px;
+  border: 1px solid var(--dn-border);
+  border-radius: 6px;
+  background: var(--dn-surface);
+  color: var(--dn-muted);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.15s ease;
+}
+.dn-category-tab:hover {
+  background: var(--dn-bg);
+  color: var(--dn-text);
+}
+.dn-category-tab.active {
+  background: var(--dn-accent);
+  color: var(--dn-light-surface);
+  border-color: var(--dn-accent);
+}
+
+.dn-card-badge-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.04);
+  color: inherit;
+  font: 600 10px/1 ui-sans-serif, system-ui, sans-serif;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.dn-card-badge-btn:hover {
+  background: rgba(0, 0, 0, 0.08);
+}
+.dn-card.dn-dark .dn-card-badge-btn {
+  background: rgba(255, 255, 255, 0.08);
+}
+.dn-card.dn-dark .dn-card-badge-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.dn-card-delete-icon {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dn-muted);
+  font: 700 11px/1 ui-sans-serif, system-ui, sans-serif;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+.dn-card-delete-icon:hover {
+  background: rgba(220, 50, 50, 0.1);
+  color: #c53030;
+}
+
+.dn-note-cat-icon {
+  font-size: 13px;
+  flex: 0 0 auto;
+  line-height: 1;
+}
+
+.dn-row-delete-btn {
+  opacity: 0.5;
+  background: transparent;
+  border: 0;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: opacity 0.15s, background 0.15s;
+}
+.dn-note-row-wrap:hover .dn-row-delete-btn,
+.dn-row-delete-btn:focus-visible {
+  opacity: 1;
+}
+.dn-row-delete-btn:hover {
+  opacity: 1;
+  background: rgba(220, 50, 50, 0.1);
+}
+
+.dn-editor-category-pills {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.dn-cat-pill {
+  padding: 3px 8px;
+  border: 1px solid var(--dn-border);
+  border-radius: 12px;
+  background: var(--dn-surface);
+  color: var(--dn-muted);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.dn-cat-pill:hover {
+  background: var(--dn-bg);
+  color: var(--dn-text);
+}
+.dn-cat-pill.active {
+  background: var(--dn-accent);
+  color: var(--dn-light-surface);
+  border-color: var(--dn-accent);
+}
+
+@media print {
+  .dn-panel,
+  .dn-launcher,
+  .dn-selection-toolbar,
+  .dn-page-layer,
+  .dn-card,
+  .dn-annotation-connectors {
+    display: none !important;
+  }
+}

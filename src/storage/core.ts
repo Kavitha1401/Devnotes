@@ -5,7 +5,7 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-export function migratePages<T extends { id: string; title: string; body: string; createdAt: number; updatedAt: number; tags?: string[]; collectionIds?: string[]; history?: unknown[]; pinned?: boolean; favorite?: boolean; archived?: boolean }>(value: unknown): Record<string, T[]> {
+export function migratePages<T extends { id: string; title: string; body: string; createdAt: number; updatedAt: number; category?: string; tags?: string[]; collectionIds?: string[]; history?: unknown[]; pinned?: boolean; favorite?: boolean; archived?: boolean }>(value: unknown): Record<string, T[]> {
   if (!isRecord(value)) return {}
   const pages: Record<string, T[]> = {}
   for (const [url, rawNotes] of Object.entries(value)) {
@@ -17,6 +17,7 @@ export function migratePages<T extends { id: string; title: string; body: string
     if (!Array.isArray(rawNotes)) continue
     const notes = rawNotes.filter((note): note is T => isRecord(note) && typeof note.id === 'string' && typeof note.title === 'string' && typeof note.body === 'string' && typeof note.createdAt === 'number' && typeof note.updatedAt === 'number').map((note) => ({
       ...note,
+      category: ['idea', 'remember', 'question', 'general'].includes((note as any).category) ? (note as any).category : 'general',
       tags: Array.isArray(note.tags) ? note.tags.filter((tag): tag is string => typeof tag === 'string') : [],
       collectionIds: Array.isArray(note.collectionIds) ? note.collectionIds.filter((id): id is string => typeof id === 'string') : [],
       history: Array.isArray(note.history) ? note.history.filter((item) => isRecord(item) && typeof item.id === 'string' && typeof item.title === 'string' && typeof item.body === 'string' && typeof item.savedAt === 'number').slice(-20) : [],
