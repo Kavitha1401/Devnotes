@@ -536,7 +536,6 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   const [open, setOpen] = useState(false)
   const [libraryOpen, setLibraryOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [personalizeOpen, setPersonalizeOpen] = useState(false)
   const [settings, setSettings] = useState<DevNotesSettings>(DEFAULT_SETTINGS)
   const [settingsReady, setSettingsReady] = useState(false)
   const systemDark = useSystemTheme()
@@ -558,7 +557,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   const [runtimeInvalid, setRuntimeInvalid] = useState(false)
   const [incognitoMode] = useState(() => isIncognitoContext())
   const [toolbarAltHeld, setToolbarAltHeld] = useState(false)
-  const captureSelectionRef = useRef<(action?: 'highlight' | 'note', color?: string) => boolean>(() => false)
+  const captureSelectionRef = useRef<(action?: 'highlight' | 'note', color?: string, shape?: Highlight['shape']) => boolean>(() => false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [annotationLayoutTick, setAnnotationLayoutTick] = useState(0)
   const [orphanedHighlights, setOrphanedHighlights] = useState<string[]>([])
@@ -1156,13 +1155,6 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     return () => { clearPageHighlights(); if (owned) style?.remove() }
   }, [])
 
-  const toggleNoteFlag = (noteId: string, field: 'pinned' | 'favorite' | 'archived', url: string) => {
-    const target = (pages[url] ?? []).find((note) => note.id === noteId)
-    if (!target) return
-    const next = { ...pages, [url]: (pages[url] ?? []).map((note) => note.id === noteId ? { ...note, [field]: !note[field], updatedAt: Date.now() } : note) }
-    persist(next)
-  }
-
   const bulkUpdate = (transform: (note: Note) => Note) => {
     if (!bulkSelection.length) return
     const selectedIds = new Set(bulkSelection)
@@ -1249,6 +1241,26 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       saved[pageUrl] = nextHighlights
       return writeHighlights(saved)
     })
+  }
+
+  const changeHighlightShape = (id: string, shape: Highlight['shape']) => {
+    const target = highlights.find((item) => item.id === id)
+    if (!target) return
+    const isTextHighlighted = target.shape !== 'none' && target.color !== 'transparent'
+    if (isTextHighlighted && shape && shape !== 'none') {
+      highlightElements(id).forEach((mark) => {
+        mark.style.cssText = `${highlightStyle(shape, target.color, isDarkPageSurface(mark.parentElement))} color:inherit;`
+      })
+    }
+    const nextHighlights: Highlight[] = highlights.map((item) => item.id === id ? { ...item, shape: isTextHighlighted ? shape : item.shape } : item)
+    setHighlights(nextHighlights)
+    void readHighlights().then((saved) => {
+      saved[pageUrl] = nextHighlights
+      return writeHighlights(saved)
+    })
+    if (shape && shape !== 'none') {
+      updateSettings({ highlightStyle: shape })
+    }
   }
 
   const moveNote = (id: string, droppedPageX: number, droppedPageY: number) => {
@@ -1510,7 +1522,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     } catch { setImportError('Could not read this backup file.') }
   }
 
-  const captureSelection = useCallback((action: 'highlight' | 'note' = 'note', color = settings.highlightColor): boolean => {
+  const captureSelection = useCallback((action: 'highlight' | 'note' = 'note', color = settings.highlightColor, shape?: Highlight['shape']): boolean => {
     const selection = window.getSelection()
     let text = ''
     let prefix = ''
@@ -1557,7 +1569,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       suffix,
       color: action === 'note' ? 'transparent' : color,
       createdAt: Date.now(),
-      shape: action === 'note' ? 'none' : settings.highlightStyle,
+      shape: action === 'note' ? 'none' : (shape ?? settings.highlightStyle),
       display: 'inline',
       placement: { side: 'right', dx: 24, dy: 0 },
       status: 'attached',
@@ -1581,24 +1593,43 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   useEffect(() => { captureSelectionRef.current = captureSelection }, [captureSelection])
 
   const clipArticle = () => {
-    const candidates = Array.from(document.querySelectorAll<HTMLElement>('article, main, [role="main"]'))
-      .sort((a, b) => (b.innerText?.length ?? 0) - (a.innerText?.length ?? 0))
-    const target = candidates[0] ?? document.body
-    const clone = target.cloneNode(true) as HTMLElement
-    clone.querySelectorAll('nav, aside, footer, header, form, button, script, style, noscript, [aria-hidden="true"], [data-devnotes-highlight], #devnotes-root, [class*="advert" i], [id*="advert" i]').forEach((element) => element.remove())
-    const text = (clone.innerText || clone.textContent || '')
-      .replace(/[ \t]+\n/g, '\n')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim()
-      .slice(0, 15_000)
-
-    if (!text) return
+    const isYouTube = location.hostname.includes('youtube.com') || location.hostname.includes('youtu.be')
+    const selection = window.getSelection()?.toString().trim()
+    const metaDesc = document.querySelector('meta[name="description"]')?.getAttribute('content')?.trim()
     const now = Date.now()
+
+    let title = pageTitle || document.title || hostname
+    let body = ''
+
+    if (isYouTube) {
+      const video = document.querySelector('video')
+      const currentTimeSec = video ? Math.floor(video.currentTime) : 0
+      const minutes = Math.floor(currentTimeSec / 60)
+      const seconds = currentTimeSec % 60
+      const timestampFormatted = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+
+      const videoUrlObj = new URL(location.href)
+      if (currentTimeSec > 0) {
+        videoUrlObj.searchParams.set('t', `${currentTimeSec}s`)
+      }
+      const timestampUrl = videoUrlObj.toString()
+
+      const channelEl = document.querySelector('#owner ytd-channel-name a, #channel-name a, .ytd-channel-name')
+      const channelName = channelEl?.textContent?.trim() || ''
+
+      title = `[Video] ${title.replace(/ - YouTube$/, '')}`
+      body = `URL: ${location.href}\nTimestamp: ${timestampFormatted} (${timestampUrl})${channelName ? `\nChannel: ${channelName}` : ''}${selection ? `\n\n> "${selection}"` : ''}`
+    } else if (selection) {
+      body = `URL: ${pageUrl}\nDomain: ${hostname}\n\n> "${selection}"`
+    } else {
+      body = `URL: ${pageUrl}\nDomain: ${hostname}${metaDesc ? `\n\nSummary: ${metaDesc}` : ''}`
+    }
+
     const note: Note = {
       id: crypto.randomUUID(),
-      title: pageTitle || 'Clipped Article',
-      body: text,
-      category: 'general',
+      title,
+      body: body.trim(),
+      category: 'remember',
       tags: ['clip'],
       createdAt: now,
       updatedAt: now,
@@ -1793,8 +1824,40 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
           />
         ))}
         <span className="dn-toolbar-divider" />
+        {(['marker', 'underline', 'box'] as const).map((shape) => (
+          <button
+            key={shape}
+            type="button"
+            className="dn-toolbar-shape-btn"
+            title={`${shape === 'marker' ? 'Marker fill' : shape === 'underline' ? 'Underline' : 'Box'} style`}
+            aria-label={`${shape} style`}
+            onPointerDown={(event) => event.stopPropagation()}
+            onMouseDown={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+            }}
+            onClick={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              const activeId = selectionToolbar.highlightIds?.[0]
+              const selection = window.getSelection()
+              const hasSelection = Boolean(selection && !selection.isCollapsed && selection.toString().trim())
+              if (activeId && !hasSelection) {
+                changeHighlightShape(activeId, shape)
+              } else {
+                captureSelection('highlight', undefined, shape)
+                selection?.removeAllRanges()
+              }
+              setSelectionToolbar(null)
+            }}
+          >
+            {shape === 'marker' ? 'Fill' : shape === 'underline' ? 'Line' : 'Box'}
+          </button>
+        ))}
+        <span className="dn-toolbar-divider" />
         <button
           type="button"
+          className="dn-toolbar-note-btn"
           onPointerDown={(event) => event.stopPropagation()}
           onMouseDown={(event) => {
             event.preventDefault()
@@ -1838,7 +1901,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
                 setSelectionToolbar(null)
               }}
             >
-              Remove highlight
+              Remove
             </button>
           </>
         )}
@@ -1876,8 +1939,8 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
           body={cleanNoteBody(note?.body ?? '')}
           category={note?.category}
           editing={editingId === item.id}
-          penSet={settings.penSet}
           noteFont={settings.noteFont}
+          onFontChange={(font) => updateSettings({ noteFont: font })}
           themeMode={effectiveTheme}
           onChange={(text) => setAnnotationText(item, text)}
           onCategoryChange={(cat) => setAnnotationCategory(item, cat)}
@@ -1895,11 +1958,8 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     <aside className={`dn-panel dn-theme-${effectiveTheme} dn-font-${settings.noteFont} ${libraryOpen ? 'dn-library-open' : 'dn-page-view'} ${open ? 'is-open' : ''} ${settings.panelSide === 'left' ? 'dn-panel-left' : ''} ${darkTheme ? 'dn-dark' : ''}`} style={{ width: `min(${settings.panelWidth}px, 100vw)`, left: settings.panelSide === 'left' ? 0 : 'auto', right: settings.panelSide === 'right' ? 0 : 'auto', '--dn-text-scale': settings.textSize === 'small' ? 0.92 : settings.textSize === 'large' ? 1.15 : 1 } as CSSProperties} aria-label="DevNotes panel" aria-hidden={!open}>
       <header className="dn-header">
         <div className="dn-brand"><span className="dn-brand-icon">d<span>.</span></span><span>devnotes</span></div>
-        <button className="dn-header-btn" onClick={() => window.print()} title="Save or print page as PDF">📄 Save PDF</button>
-        {personalizeOpen && <section className="dn-personalize" role="dialog" aria-label="Annotation appearance"><div><strong>Annotation appearance</strong><button className="dn-icon-button" onClick={() => setPersonalizeOpen(false)} aria-label="Close annotation appearance">×</button></div><label>Highlight shape<select value={settings.highlightStyle} onChange={(event) => updateSettings({ highlightStyle: event.target.value as DevNotesSettings['highlightStyle'] })}><option value="marker">Marker fill</option><option value="underline">Wavy question</option><option value="box">Box reminder</option><option value="bracket">Margin bracket</option></select></label><label>Pen set<select value={settings.penSet} onChange={(event) => updateSettings({ penSet: event.target.value as DevNotesSettings['penSet'] })}><option value="marker">Marker</option><option value="pencil">Pencil</option><option value="fountain">Fountain pen</option></select></label><label>Note font<select value={settings.noteFont} onChange={(event) => updateSettings({ noteFont: event.target.value as DevNotesSettings['noteFont'] })}><option value="serif">Book serif</option><option value="handwriting">Handwriting</option><option value="mono">Monospace</option></select></label></section>}
-        <button className="dn-icon-button" onClick={() => setPersonalizeOpen(true)} aria-label="Personalize annotations" title="Annotation styles">◐</button>
+        <button className="dn-header-btn" onClick={() => window.print()} title="Save or print page as PDF">Save PDF</button>
         <button className="dn-library-toggle" onClick={() => { const next = !libraryOpen; setLibraryOpen(next); setShowAllNotes(next); if (!next) { setShowArchived(false); setShowFavorites(false); setShowTasks(false); setShowTrash(false) } }}>{libraryOpen ? 'This page' : 'Library'}</button>
-        <button className="dn-icon-button dn-site-disable" onClick={() => void disableOnThisSite()} aria-label={`Disable DevNotes on ${hostname}`} title="Disable on this site">◉</button>
         <button className="dn-icon-button" onClick={() => setSettingsOpen(true)} aria-label="Open DevNotes settings" title="Settings">⚙</button>
         <button className="dn-icon-button" onClick={() => setOpen(false)} aria-label="Close panel">×</button>
       </header>
@@ -1912,16 +1972,15 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       <div className="dn-page">
         <div className="dn-site-icon">{hostname[0]?.toUpperCase()}</div>
         <div className="dn-page-copy"><strong>{hostname}</strong><span title={pageTitle}>{pageTitle}</span></div>
-        <button className="dn-clip" title="Clip clean article into a note" onClick={clipArticle}>Clip</button>
-        <button className="dn-icon-button dn-more" title="Highlight selection and save as a note" aria-label="Capture selected text" onClick={() => captureSelection()}>✳</button>
+        <button className="dn-clip" title="Clip reference or bookmark into note" onClick={clipArticle}>+ Clip</button>
       </div>
 
       <div className="dn-category-tabs">
         {([
           ['all', 'All'],
-          ['idea', '💡 Idea'],
-          ['remember', '📌 Remember'],
-          ['question', '❓ Question'],
+          ['idea', 'Idea'],
+          ['remember', 'Remember'],
+          ['question', 'Question'],
         ] as const).map(([cat, label]) => (
           <button
             key={cat}
@@ -1929,6 +1988,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
             className={`dn-category-tab ${categoryFilter === cat ? 'active' : ''}`}
             onClick={() => setCategoryFilter(cat)}
           >
+            {cat !== 'all' && <span className={`dn-cat-dot dn-cat-${cat}`} />}
             {label}
           </button>
         ))}
@@ -1972,7 +2032,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
           <button className="dn-export" onClick={() => importRef.current?.click()} title="Import JSON backup">Import</button>
           <input ref={importRef} type="file" accept="application/json,.json" hidden onChange={(event) => { void importJSON(event.target.files?.[0]); event.currentTarget.value = '' }} />
           <select className="dn-template-select" aria-label="Create note from template" value="" onChange={(event) => { if (event.target.value) createFromTemplate(event.target.value as keyof typeof NOTE_TEMPLATES) }}><option value="">Template…</option>{Object.keys(NOTE_TEMPLATES).map((name) => <option key={name} value={name}>{name}</option>)}</select>
-          <button className="dn-new" onClick={() => createNote()}><b>＋</b> New note</button>
+          <button className="dn-new" onClick={() => createNote()}>+ New note</button>
         </div>
       </div>
       {showAllNotes && <div className="dn-collection-bar"><select aria-label="Filter by collection" value={collectionFilter} onChange={(event) => setCollectionFilter(event.target.value)}><option value="">All collections</option>{collections.map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select><input className="dn-domain-filter" aria-label="Filter by website domain" placeholder="Domain" value={domainFilter} onChange={(event) => setDomainFilter(event.target.value)} /><select aria-label="Sort notes" value={sortMode} onChange={(event) => setSortMode(event.target.value as typeof sortMode)}><option value="updated">Updated</option><option value="created">Created</option><option value="title">Title</option></select><input aria-label="Updated after" title="Updated after" type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} /><input aria-label="Updated before" title="Updated before" type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} /><button className="dn-collection-add" onClick={createCollection}>＋</button></div>}
@@ -1982,26 +2042,23 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       {addingCollection && <form className="dn-new-collection" onSubmit={(event) => { event.preventDefault(); saveCollection() }}><input autoFocus aria-label="Collection name" placeholder="Collection name" value={collectionDraft} onChange={(event) => setCollectionDraft(event.target.value)} /><button type="submit">Create</button><button type="button" onClick={() => { setAddingCollection(false); setCollectionDraft('') }}>Cancel</button></form>}
       <label className="dn-search"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.8" cy="8.8" r="5.8" /><path d="m13.2 13.2 4 4" /></svg><input ref={searchRef} value={query} onChange={(event) => { setQuery(event.target.value); setLibraryOpen(true); setShowAllNotes(true) }} placeholder="Search notes" /><kbd>{isMac ? '⌘' : 'Ctrl'} K</kbd></label>
       {importError && <div className="dn-import-status" role="status">{importError}<button aria-label="Dismiss message" onClick={() => setImportError('')}>×</button></div>}
-      {!ready ? <div className="dn-empty">Loading your notes…</div> : showTrash ? <div className="dn-trash-list">{trash.length ? trash.map((entry) => <div className="dn-trash-row" key={entry.note.id}><span><strong>{entry.note.title || 'Untitled note'}</strong><small>{safeHostname(entry.url)}</small></span><button className="dn-preview-toggle" onClick={() => restoreFromTrash(entry)}>Restore</button><button className="dn-delete" onClick={() => { const next = trash.filter((item) => item.note.id !== entry.note.id); setTrash(next); void writeTrash(next) }}>Delete forever</button></div>) : <div className="dn-empty">Trash is empty.</div>}</div> : !showAllNotes && notes.length === 0 && !query.trim() ? <div className="dn-empty-state"><div className="dn-empty-icon">✎</div><strong>A fresh page to think on.</strong><p>Keep the useful bits, questions, and ideas you find here.</p><button onClick={() => createNote()}>Write your first note <span>→</span></button><div className="dn-hint">TIP · SELECT TEXT ON THE PAGE, THEN TAP ✳</div></div> : filteredNotes.length === 0 ? <div className="dn-empty">{query.trim() ? `No notes match “${query}”.` : 'No notes here yet.'}</div> : <div className="dn-content">
+      {!ready ? <div className="dn-empty">Loading your notes…</div> : showTrash ? <div className="dn-trash-list">{trash.length ? trash.map((entry) => <div className="dn-trash-row" key={entry.note.id}><span><strong>{entry.note.title || 'Untitled note'}</strong><small>{safeHostname(entry.url)}</small></span><button className="dn-preview-toggle" onClick={() => restoreFromTrash(entry)}>Restore</button><button className="dn-delete" onClick={() => { const next = trash.filter((item) => item.note.id !== entry.note.id); setTrash(next); void writeTrash(next) }}>Delete forever</button></div>) : <div className="dn-empty">Trash is empty.</div>}</div> : !showAllNotes && notes.length === 0 && !query.trim() ? <div className="dn-empty-state"><div className="dn-empty-icon">✎</div><strong>A fresh page to think on.</strong><p>Keep the useful bits, questions, and ideas you find here.</p><button onClick={() => createNote()}>Write your first note <span>→</span></button><div className="dn-hint">Select any text on the page to highlight or attach a note.</div></div> : filteredNotes.length === 0 ? <div className="dn-empty">{query.trim() ? `No notes match “${query}”.` : 'No notes here yet.'}</div> : <div className="dn-content">
         <div className="dn-note-list">{filteredNotes.map(({ note, url }) => {
-          const catIcon = note.category === 'idea' ? '💡' : note.category === 'remember' ? '📌' : note.category === 'question' ? '❓' : '📝'
           return (
             <div key={`${url}:${note.id}`} className={`dn-note-row-wrap ${selectedPageUrl === url && selectedId === note.id ? 'active' : ''}`}>
               {showAllNotes && <input className="dn-bulk-check" type="checkbox" aria-label={`Select ${note.title || 'Untitled note'}`} checked={bulkSelection.includes(note.id)} onChange={(event) => setBulkSelection((ids) => event.target.checked ? [...ids, note.id] : ids.filter((id) => id !== note.id))} />}
               <button className="dn-note-row" onClick={() => { setSelectedPageUrl(url); setSelectedId(note.id) }}>
-                <span className="dn-note-cat-icon">{catIcon}</span>
+                <span className={`dn-cat-dot dn-cat-${note.category || 'general'}`} />
                 <span className="dn-note-row-text">
-                  <strong>{note.pinned ? '📌 ' : ''}<SearchMatch text={note.title || 'Untitled note'} query={query} /></strong>
+                  <strong>{note.pinned ? <span className="dn-pinned-badge" title="Pinned note">● </span> : null}<SearchMatch text={note.title || 'Untitled note'} query={query} /></strong>
                   <small>{showAllNotes || query ? safeHostname(url) + ' · ' : ''}{note.body.trim().replace(/^>\s?/gm, '').slice(0, 58) || 'No content yet'}</small>
                 </span>
               </button>
-              <button className={`dn-row-action ${note.favorite ? 'selected' : ''}`} title={note.favorite ? 'Remove favorite' : 'Add favorite'} aria-label={note.favorite ? 'Remove favorite' : 'Add favorite'} onClick={() => toggleNoteFlag(note.id, 'favorite', url)}>{note.favorite ? '♥' : '♡'}</button>
-              <button className={`dn-row-action ${note.archived ? 'selected' : ''}`} title={note.archived ? 'Restore from archive' : 'Archive note'} aria-label={note.archived ? 'Restore note' : 'Archive note'} onClick={() => toggleNoteFlag(note.id, 'archived', url)}>{note.archived ? '↶' : '▱'}</button>
-              <button className="dn-row-delete-btn" title="Delete note" aria-label="Delete note" onClick={(event) => { event.stopPropagation(); deleteNote(note.id, url) }}>🗑️</button>
+              <button className="dn-row-delete-btn" title="Delete note" aria-label="Delete note" onClick={(event) => { event.stopPropagation(); deleteNote(note.id, url) }}>×</button>
             </div>
           )
         })}</div>
-        {selected ? <article className="dn-editor"><div className="dn-editor-top"><div className="dn-editor-category-pills">{(['idea', 'remember', 'question', 'general'] as const).map((cat) => <button key={cat} type="button" className={`dn-cat-pill ${selected.category === cat || (!selected.category && cat === 'general') ? 'active' : ''}`} onClick={() => updateSelected({ category: cat })}>{cat === 'idea' ? '💡 Idea' : cat === 'remember' ? '📌 Remember' : cat === 'question' ? '❓ Question' : '📝 Note'}</button>)}</div><div className="dn-editor-actions"><button className={`dn-preview-toggle ${selected.pinned ? 'active' : ''}`} onClick={() => updateSelected({ pinned: !selected.pinned })}>{selected.pinned ? 'Unpin' : 'Pin'}</button><button className={`dn-preview-toggle ${selected.favorite ? 'active' : ''}`} onClick={() => updateSelected({ favorite: !selected.favorite })}>{selected.favorite ? '♥ Favorite' : '♡ Favorite'}</button><button className="dn-preview-toggle" onClick={() => setShowHistory((value) => !value)}>History</button><button className="dn-delete dn-delete-note-btn" onClick={() => deleteNote(selected.id, selectedPageUrl)} title="Move note to trash">Delete</button></div></div><input className="dn-title" placeholder="Give this note a title…" value={selected.title} onChange={(event) => updateNote('title', event.target.value)} />{showHistory && <div className="dn-history-list">{(selected.history ?? []).length ? [...(selected.history ?? [])].reverse().map((revision) => <button key={revision.id} onClick={() => restoreRevision(revision)}><strong>{revision.title || 'Untitled note'}</strong><small>{new Date(revision.savedAt).toLocaleString()} · Restore</small></button>) : <small>No saved versions yet. Versions are captured during editing.</small>}</div>}<textarea className="dn-body" placeholder="Start writing…" value={selected.body} onChange={(event) => updateNote('body', event.target.value)} /><div className="dn-collection-assign">{collections.length ? collections.map((collection) => <label key={collection.id}><input type="checkbox" checked={selected.collectionIds?.includes(collection.id) ?? false} onChange={(event) => { const ids = selected.collectionIds ?? []; updateSelected({ collectionIds: event.target.checked ? [...ids, collection.id] : ids.filter((id) => id !== collection.id) }) }} />{collection.name}</label>) : <button className="dn-collection-add" onClick={createCollection}>＋ Create a collection</button>}</div><TagInput key={selected.id} tags={selected.tags ?? []} onCommit={(tags) => updateNote('tags', tags)} />{backlinks.length > 0 && <div className="dn-backlinks"><strong>Linked from</strong>{backlinks.map(({ note, url }) => <button key={note.id} onClick={() => { setSelectedPageUrl(url); setSelectedId(note.id) }}>{note.title || 'Untitled note'}</button>)}</div>}<div className="dn-editor-footer"><span><i />{saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Save failed · try editing again' : 'Saved locally'}</span></div></article> : null}
+        {selected ? <article className="dn-editor"><div className="dn-editor-top"><div className="dn-editor-category-pills">{(['idea', 'remember', 'question', 'general'] as const).map((cat) => <button key={cat} type="button" className={`dn-cat-pill dn-cat-${cat} ${selected.category === cat || (!selected.category && cat === 'general') ? 'active' : ''}`} onClick={() => updateSelected({ category: cat })}><span className={`dn-cat-dot dn-cat-${cat}`} />{cat === 'idea' ? 'Idea' : cat === 'remember' ? 'Remember' : cat === 'question' ? 'Question' : 'Note'}</button>)}</div><div className="dn-editor-actions"><button type="button" className="dn-editor-font-toggle" title={`Font: ${settings.noteFont}. Click to change.`} onClick={() => { const nextFont = settings.noteFont === 'sans' ? 'serif' : settings.noteFont === 'serif' ? 'mono' : 'sans'; updateSettings({ noteFont: nextFont }) }}>Aa ({settings.noteFont === 'sans' ? 'Sans' : settings.noteFont === 'serif' ? 'Serif' : 'Mono'})</button><button type="button" className={`dn-action-btn ${selected.pinned ? 'active' : ''}`} onClick={() => updateSelected({ pinned: !selected.pinned })}>{selected.pinned ? 'Pinned' : 'Pin'}</button><button type="button" className="dn-action-btn" onClick={() => setShowHistory((value) => !value)}>History</button><button type="button" className="dn-action-btn dn-action-delete" onClick={() => deleteNote(selected.id, selectedPageUrl)} title="Move note to trash">Delete</button></div></div><input className="dn-title" placeholder="Give this note a title…" value={selected.title} onChange={(event) => updateNote('title', event.target.value)} />{showHistory && <div className="dn-history-list">{(selected.history ?? []).length ? [...(selected.history ?? [])].reverse().map((revision) => <button key={revision.id} onClick={() => restoreRevision(revision)}><strong>{revision.title || 'Untitled note'}</strong><small>{new Date(revision.savedAt).toLocaleString()} · Restore</small></button>) : <small>No saved versions yet. Versions are captured during editing.</small>}</div>}<textarea className="dn-body" placeholder="Start writing…" value={selected.body} onChange={(event) => updateNote('body', event.target.value)} /><div className="dn-collection-assign">{collections.length ? collections.map((collection) => <label key={collection.id}><input type="checkbox" checked={selected.collectionIds?.includes(collection.id) ?? false} onChange={(event) => { const ids = selected.collectionIds ?? []; updateSelected({ collectionIds: event.target.checked ? [...ids, collection.id] : ids.filter((id) => id !== collection.id) }) }} />{collection.name}</label>) : <button className="dn-collection-add" onClick={createCollection}>＋ Create a collection</button>}</div><TagInput key={selected.id} tags={selected.tags ?? []} onCommit={(tags) => updateNote('tags', tags)} />{backlinks.length > 0 && <div className="dn-backlinks"><strong>Linked from</strong>{backlinks.map(({ note, url }) => <button key={note.id} onClick={() => { setSelectedPageUrl(url); setSelectedId(note.id) }}>{note.title || 'Untitled note'}</button>)}</div>}<div className="dn-editor-footer"><span><i />{saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Save failed · try editing again' : 'Saved locally'}</span></div></article> : null}
       </div>}
     </aside>
   </>

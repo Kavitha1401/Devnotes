@@ -4,11 +4,11 @@ import type { Highlight, NoteCategory } from '../storage/types'
 
 const CARD_TASK_LINE = /^\s*[-*+]\s+\[([ xX])\]\s*(.*)$/
 
-const CATEGORY_CONFIG: Record<NoteCategory, { label: string; icon: string; color: string }> = {
-  general: { label: 'Note', icon: '📝', color: '#64748b' },
-  idea: { label: 'Idea', icon: '💡', color: '#eab308' },
-  remember: { label: 'Remember', icon: '📌', color: '#3b82f6' },
-  question: { label: 'Question', icon: '❓', color: '#ec4899' },
+const CATEGORY_CONFIG: Record<NoteCategory, { label: string; color: string }> = {
+  general: { label: 'Note', color: '#64748b' },
+  idea: { label: 'Idea', color: '#f59e0b' },
+  remember: { label: 'Remember', color: '#3b82f6' },
+  question: { label: 'Question', color: '#8b5cf6' },
 }
 
 function renderInline(text: string) {
@@ -88,17 +88,35 @@ function CardBody({ body, editing, onChange, onEditingChange, onToggleTask }: {
   />
 }
 
-export function AnnotationCard({ item, x, y, body, category = 'general', editing, penSet, noteFont, onChange, onCategoryChange, onEditingChange, onToggleTask, onOpen, onRemove, onMove, themeMode }: {
+export function AnnotationCard({
+  item: _item,
+  x,
+  y,
+  body,
+  category = 'general',
+  editing,
+  noteFont = 'sans',
+  onChange,
+  onCategoryChange,
+  onFontChange,
+  onEditingChange,
+  onToggleTask,
+  onOpen,
+  onRemove,
+  onMove,
+  themeMode,
+}: {
   item: Highlight
   x: number
   y: number
   body: string
   category?: NoteCategory
   editing: boolean
-  penSet: string
-  noteFont: string
+  penSet?: string
+  noteFont?: string
   onChange: (text: string) => void
   onCategoryChange?: (category: NoteCategory) => void
+  onFontChange?: (font: 'sans' | 'serif' | 'mono') => void
   onEditingChange: (editing: boolean) => void
   onToggleTask: (taskIndex: number, done: boolean) => void
   onOpen: () => void
@@ -120,11 +138,11 @@ export function AnnotationCard({ item, x, y, body, category = 'general', editing
   const style = {
     left: x,
     top: y,
-    '--accent': config.color || (item.color === 'transparent' ? 'var(--dn-accent)' : item.color),
+    '--card-cat-color': config.color,
   } as CSSProperties
 
   return <section
-    className={`dn-card dn-pen-${penSet} dn-font-${noteFont} ${themeMode === 'dark' ? 'dn-dark' : themeMode === 'sepia' ? 'dn-theme-sepia' : ''}`}
+    className={`dn-card dn-font-${noteFont} ${themeMode === 'dark' ? 'dn-dark' : themeMode === 'sepia' ? 'dn-theme-sepia' : ''}`}
     style={style}
     aria-label="Note"
   >
@@ -168,26 +186,44 @@ export function AnnotationCard({ item, x, y, body, category = 'general', editing
           cycleCategory()
         }}
       >
-        <span>{config.icon}</span> {config.label}
+        <span className="dn-card-badge-dot" style={{ backgroundColor: config.color }} />
+        <span>{config.label}</span>
       </button>
-      <span className="dn-card-drag-hint">⋮⋮ Drag</span>
-      <button
-        type="button"
-        className="dn-card-delete-icon"
-        title="Delete this note"
-        aria-label="Delete this note"
-        onClick={(event) => {
-          event.stopPropagation()
-          onRemove()
-        }}
-      >
-        ✕
-      </button>
+      <div className="dn-card-header-right">
+        {onFontChange && (
+          <button
+            type="button"
+            className="dn-card-font-btn"
+            title={`Font: ${noteFont}. Click to change.`}
+            onClick={(event) => {
+              event.stopPropagation()
+              const fonts: ('sans' | 'serif' | 'mono')[] = ['sans', 'serif', 'mono']
+              const next = fonts[(fonts.indexOf(noteFont as any) + 1) % fonts.length]
+              onFontChange(next)
+            }}
+          >
+            Aa
+          </button>
+        )}
+        <span className="dn-card-drag-hint" title="Drag to move note">⋮⋮</span>
+        <button
+          type="button"
+          className="dn-card-delete-icon"
+          title="Delete this note"
+          aria-label="Delete this note"
+          onClick={(event) => {
+            event.stopPropagation()
+            onRemove()
+          }}
+        >
+          ✕
+        </button>
+      </div>
     </div>
     <CardBody body={body} editing={editing} onChange={onChange} onEditingChange={onEditingChange} onToggleTask={onToggleTask} />
     <div className="dn-card-actions">
       <button type="button" onClick={() => onEditingChange(true)}>Edit</button>
-      <button type="button" onClick={onOpen}>Open in panel</button>
+      <button type="button" onClick={onOpen}>Open</button>
       <button type="button" aria-label="Delete note" title="Delete note" onClick={onRemove}>Delete</button>
     </div>
   </section>

@@ -14,7 +14,7 @@ export type DevNotesSettings = {
   historyDepth: number
   highlightStyle: 'marker' | 'underline' | 'box' | 'bracket'
   penSet: 'marker' | 'pencil' | 'fountain'
-  noteFont: 'serif' | 'handwriting' | 'mono'
+  noteFont: 'sans' | 'serif' | 'mono'
   toolbarBehavior: 'always' | 'hold-alt' | 'never'
   textSize: 'small' | 'medium' | 'large'
   onboardingComplete: boolean
@@ -33,7 +33,7 @@ export const DEFAULT_SETTINGS: DevNotesSettings = {
   historyDepth: 20,
   highlightStyle: 'marker',
   penSet: 'marker',
-  noteFont: 'serif',
+  noteFont: 'sans',
   toolbarBehavior: 'always',
   textSize: 'medium',
   onboardingComplete: false,
@@ -74,7 +74,11 @@ export function normalizeSettings(value: unknown): DevNotesSettings {
     historyDepth: typeof raw.historyDepth === 'number' ? Math.min(100, Math.max(1, Math.round(raw.historyDepth))) : DEFAULT_SETTINGS.historyDepth,
     highlightStyle: ['marker', 'underline', 'box', 'bracket'].includes(raw.highlightStyle as string) ? raw.highlightStyle as DevNotesSettings['highlightStyle'] : DEFAULT_SETTINGS.highlightStyle,
     penSet: ['marker', 'pencil', 'fountain'].includes(raw.penSet as string) ? raw.penSet as DevNotesSettings['penSet'] : DEFAULT_SETTINGS.penSet,
-    noteFont: ['serif', 'handwriting', 'mono'].includes(raw.noteFont as string) ? raw.noteFont as DevNotesSettings['noteFont'] : DEFAULT_SETTINGS.noteFont,
+    noteFont: (['sans', 'serif', 'mono'] as string[]).includes(raw.noteFont as string)
+      ? (raw.noteFont as DevNotesSettings['noteFont'])
+      : (raw.noteFont as string) === 'handwriting'
+        ? 'sans'
+        : DEFAULT_SETTINGS.noteFont,
     toolbarBehavior: ['always', 'hold-alt', 'never'].includes(raw.toolbarBehavior as string) ? raw.toolbarBehavior as DevNotesSettings['toolbarBehavior'] : DEFAULT_SETTINGS.toolbarBehavior,
     textSize: ['small', 'medium', 'large'].includes(raw.textSize as string) ? raw.textSize as DevNotesSettings['textSize'] : DEFAULT_SETTINGS.textSize,
     onboardingComplete: Boolean(raw.onboardingComplete),
