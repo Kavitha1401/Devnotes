@@ -1069,6 +1069,7 @@ button {
 /* Scoped note fonts: ONLY applies to note body/title and card text, NEVER system UI or settings */
 .dn-card.dn-font-serif .dn-card-input,
 .dn-card.dn-font-serif .dn-card-read,
+.dn-card.dn-font-serif .dn-card-title,
 .dn-editor.dn-font-serif .dn-title,
 .dn-editor.dn-font-serif .dn-body {
   font-family: var(--dn-font-serif);
@@ -1076,6 +1077,7 @@ button {
 
 .dn-card.dn-font-mono .dn-card-input,
 .dn-card.dn-font-mono .dn-card-read,
+.dn-card.dn-font-mono .dn-card-title,
 .dn-editor.dn-font-mono .dn-title,
 .dn-editor.dn-font-mono .dn-body {
   font-family: var(--dn-font-mono);
@@ -1083,9 +1085,168 @@ button {
 
 .dn-card.dn-font-sans .dn-card-input,
 .dn-card.dn-font-sans .dn-card-read,
+.dn-card.dn-font-sans .dn-card-title,
 .dn-editor.dn-font-sans .dn-title,
 .dn-editor.dn-font-sans .dn-body {
   font-family: var(--dn-font);
+}
+
+.dn-card-title {
+  font-weight: 600;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--dn-text);
+  margin-bottom: 6px;
+  word-break: break-word;
+}
+
+/* To-do Interactive Editor */
+.dn-todo-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 120px;
+  padding: 4px 0;
+}
+
+.dn-todo-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 4px;
+}
+
+.dn-todo-header small {
+  font-size: 11px;
+  color: var(--dn-muted);
+  font-weight: 500;
+}
+
+.dn-todo-mode-btn {
+  border: 0;
+  background: transparent;
+  color: var(--dn-muted);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.dn-todo-mode-btn:hover {
+  color: var(--dn-accent);
+  background: var(--dn-bg);
+}
+
+.dn-todo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dn-todo-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: var(--dn-surface);
+  border: 1px solid var(--dn-border);
+  transition: border-color 0.15s ease;
+}
+
+.dn-todo-item:focus-within {
+  border-color: var(--dn-accent);
+}
+
+.dn-todo-item.is-done {
+  opacity: 0.7;
+}
+
+.dn-todo-check {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--dn-accent);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.dn-todo-text {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--dn-text);
+  font-size: 13px;
+  font-family: inherit;
+  padding: 0;
+}
+
+.dn-todo-item.is-done .dn-todo-text {
+  text-decoration: line-through;
+  color: var(--dn-muted);
+}
+
+.dn-todo-delete-btn {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dn-muted);
+  font-size: 14px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.dn-todo-item:hover .dn-todo-delete-btn,
+.dn-todo-item:focus-within .dn-todo-delete-btn {
+  opacity: 1;
+}
+
+.dn-todo-delete-btn:hover {
+  color: #ef4444;
+}
+
+.dn-todo-add-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px dashed var(--dn-border);
+  background: transparent;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.dn-todo-add-form:focus-within {
+  border-color: var(--dn-accent);
+  background: var(--dn-surface);
+}
+
+.dn-todo-add-icon {
+  font-size: 14px;
+  color: var(--dn-muted);
+  line-height: 1;
+}
+
+.dn-todo-add-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--dn-text);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 0;
+}
+
+.dn-todo-add-input::placeholder {
+  color: var(--dn-muted);
 }
 
 /* Floating Selection Toolbar */

@@ -7,6 +7,7 @@ import type { BackupFile, Collection, Highlight, Note, NoteCategory, NotePlaceme
 import { findBestAnchor } from './highlights/anchor'
 import { TagInput } from './components/TagInput'
 import { AnnotationCard } from './components/AnnotationCard'
+import { TodoEditor } from './components/TodoEditor'
 import { useSystemTheme } from './hooks/useSystemTheme'
 
 type AnnotationPlacement = { item: Highlight; index: number; side: 'left' | 'right' | 'marker'; x: number; y: number; anchorX: number; anchorY: number; rect: { left: number; top: number; right: number; bottom: number; width: number; height: number }; note?: Note }
@@ -1068,7 +1069,25 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       setSelectionToolbar(null)
     }
 
-    const onMouseUp = (event: MouseEvent) => updateSelection(event.altKey)
+    const onMouseUp = (event: MouseEvent) => {
+      const selection = window.getSelection()
+      if (!selection || selection.isCollapsed || !selection.toString().trim()) {
+        const target = event.target as HTMLElement | null
+        const mark = target?.closest<HTMLElement>('[data-devnotes-highlight]') ||
+          event.composedPath().find((entry): entry is HTMLElement => entry instanceof HTMLElement && entry.hasAttribute('data-devnotes-highlight'))
+        if (mark?.dataset.devnotesHighlight) {
+          const id = mark.dataset.devnotesHighlight
+          const rect = mark.getBoundingClientRect()
+          setSelectionToolbar({
+            x: Math.max(8, Math.min(window.innerWidth - 260, rect.left + rect.width / 2 - 120)),
+            y: Math.max(8, rect.top - 54),
+            highlightIds: [id],
+          })
+          return
+        }
+      }
+      updateSelection(event.altKey)
+    }
     const onKeyUp = (event: KeyboardEvent) => updateSelection(event.altKey)
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.altKey) setToolbarAltHeld(true)
@@ -1226,13 +1245,11 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   const changeHighlightColor = (id: string, color: string) => {
     const target = highlights.find((item) => item.id === id)
     if (!target) return
-    const isTextHighlighted = target.shape !== 'none' && target.color !== 'transparent'
-    if (isTextHighlighted) {
-      highlightElements(id).forEach((mark) => {
-        mark.style.cssText = `${highlightStyle(target.shape, color, isDarkPageSurface(mark.parentElement))} color:inherit;`
-      })
-    }
-    const nextHighlights = highlights.map((item) => item.id === id ? { ...item, color: isTextHighlighted ? color : item.color } : item)
+    const nextShape = (!target.shape || target.shape === 'none') ? 'marker' : target.shape
+    highlightElements(id).forEach((mark) => {
+      mark.style.cssText = `${highlightStyle(nextShape, color, isDarkPageSurface(mark.parentElement))} color:inherit;`
+    })
+    const nextHighlights = highlights.map((item) => item.id === id ? { ...item, color, shape: nextShape } : item)
     setHighlights(nextHighlights)
     void readHighlights().then((saved) => {
       saved[pageUrl] = nextHighlights
@@ -1243,21 +1260,18 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   const changeHighlightShape = (id: string, shape: Highlight['shape']) => {
     const target = highlights.find((item) => item.id === id)
     if (!target) return
-    const isTextHighlighted = target.shape !== 'none' && target.color !== 'transparent'
-    if (isTextHighlighted && shape && shape !== 'none') {
-      highlightElements(id).forEach((mark) => {
-        mark.style.cssText = `${highlightStyle(shape, target.color, isDarkPageSurface(mark.parentElement))} color:inherit;`
-      })
-    }
-    const nextHighlights: Highlight[] = highlights.map((item) => item.id === id ? { ...item, shape: isTextHighlighted ? shape : item.shape } : item)
+    const nextShape = (!shape || shape === 'none') ? 'marker' : shape
+    const nextColor = (!target.color || target.color === 'transparent') ? settings.highlightColor : target.color
+    highlightElements(id).forEach((mark) => {
+      mark.style.cssText = `${highlightStyle(nextShape, nextColor, isDarkPageSurface(mark.parentElement))} color:inherit;`
+    })
+    const nextHighlights: Highlight[] = highlights.map((item) => item.id === id ? { ...item, shape: nextShape, color: nextColor } : item)
     setHighlights(nextHighlights)
     void readHighlights().then((saved) => {
       saved[pageUrl] = nextHighlights
       return writeHighlights(saved)
     })
-    if (shape && shape !== 'none') {
-      updateSettings({ highlightStyle: shape })
-    }
+    updateSettings({ highlightStyle: nextShape })
   }
 
   const moveNote = (id: string, droppedPageX: number, droppedPageY: number) => {
@@ -1381,8 +1395,8 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     const target = highlights.find((item) => item.id === id)
     if (!target) return
 
-    // If this highlight has a note, ONLY remove the highlight color/shape from the text; NEVER delete the note!
-    if (target.noteId && (target.color !== 'transparent' || target.shape !== 'none')) {
+    const hasLiveNote = Boolean(target.noteId && (pages[pageUrl] ?? []).some((n) => n.id === target.noteId))
+    if (hasLiveNote && (target.color !== 'transparent' || target.shape !== 'none')) {
       highlightElements(id).forEach((mark) => {
         mark.style.cssText = `${highlightStyle('none', 'transparent')} color:inherit;`
       })
@@ -1395,7 +1409,6 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       return
     }
 
-    // If there is no note attached, or it's already transparent, delete the card and mark
     deleteAnnotationCard(id)
   }
 
@@ -1461,6 +1474,36 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
 
   const captureSelection = useCallback((action: 'highlight' | 'note' = 'note', color = settings.highlightColor, shape?: Highlight['shape']): boolean => {
     const selection = window.getSelection()
+
+    // Clean up any overlapping highlights in the selected range BEFORE reading text nodes
+    const overlappingMarks = new Set<string>()
+    highlightElements().forEach((m) => {
+      try {
+        if (selection && selection.rangeCount > 0 && selection.getRangeAt(0)?.intersectsNode(m) && m.dataset.devnotesHighlight) {
+          overlappingMarks.add(m.dataset.devnotesHighlight)
+        }
+      } catch {
+        // ignore
+      }
+    })
+    let inheritedNoteId: string | undefined
+    if (overlappingMarks.size > 0) {
+      overlappingMarks.forEach((id) => {
+        const found = highlights.find((h) => h.id === id)
+        if (found?.noteId && !inheritedNoteId) {
+          inheritedNoteId = found.noteId
+        }
+        highlightElements(id).forEach((mark) => {
+          const parent = mark.parentNode
+          if (parent) {
+            while (mark.firstChild) parent.insertBefore(mark.firstChild, mark)
+            mark.remove()
+            parent.normalize()
+          }
+        })
+      })
+    }
+
     let text = ''
     let prefix = ''
     let suffix = ''
@@ -1499,32 +1542,9 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       return false
     }
 
-    // Clean up any overlapping highlights in the selected range to prevent nested/duplicate marks
-    const overlappingMarks = new Set<string>()
-    highlightElements().forEach((m) => {
-      try {
-        if (selection && selection.rangeCount > 0 && selection.getRangeAt(0)?.intersectsNode(m) && m.dataset.devnotesHighlight) {
-          overlappingMarks.add(m.dataset.devnotesHighlight)
-        }
-      } catch {
-        // ignore
-      }
-    })
-    if (overlappingMarks.size > 0) {
-      overlappingMarks.forEach((id) => {
-        highlightElements(id).forEach((mark) => {
-          const parent = mark.parentNode
-          if (parent) {
-            while (mark.firstChild) parent.insertBefore(mark.firstChild, mark)
-            mark.remove()
-            parent.normalize()
-          }
-        })
-      })
-    }
-
     const item: Highlight = {
       id: crypto.randomUUID(),
+      noteId: inheritedNoteId,
       text,
       prefix,
       suffix,
@@ -1779,13 +1799,13 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
           />
         ))}
         <span className="dn-toolbar-divider" />
-        {(['marker', 'underline', 'box'] as const).map((shape) => (
+        {(['marker', 'underline'] as const).map((shape) => (
           <button
             key={shape}
             type="button"
             className="dn-toolbar-shape-btn"
-            title={`${shape === 'marker' ? 'Marker fill' : shape === 'underline' ? 'Underline' : 'Box'} style`}
-            aria-label={`${shape} style`}
+            title={`${shape === 'marker' ? 'Highlight fill' : 'Underline'} style`}
+            aria-label={`${shape === 'marker' ? 'Highlight fill' : 'Underline'} style`}
             onPointerDown={(event) => event.stopPropagation()}
             onMouseDown={(event) => {
               event.preventDefault()
@@ -1804,7 +1824,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
               setSelectionToolbar(null)
             }}
           >
-            {shape === 'marker' ? 'Fill' : shape === 'underline' ? 'Line' : 'Box'}
+            {shape === 'marker' ? 'Fill' : 'Underline'}
           </button>
         ))}
         <span className="dn-toolbar-divider" />
@@ -1889,6 +1909,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
           item={item}
           x={x}
           y={y}
+          title={note?.title}
           body={cleanNoteBody(note?.body ?? '')}
           category={note?.category}
           editing={editingId === item.id}
@@ -1992,7 +2013,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
             </div>
           )
         })}</div>
-        {selected ? <article className={`dn-editor dn-font-${settings.noteFont}`}><div className="dn-editor-top"><div className="dn-editor-category-pills">{(['general', 'todo', 'idea', 'remember', 'question'] as const).map((cat) => <button key={cat} type="button" className={`dn-cat-pill dn-cat-${cat} ${selected.category === cat || (!selected.category && cat === 'general') ? 'active' : ''}`} onClick={() => { updateSelected({ category: cat }); if (cat === 'todo' && !selected.body.trim()) { updateNote('body', '- [ ] ') } }}><span className={`dn-cat-dot dn-cat-${cat}`} />{cat === 'general' ? 'Note' : cat === 'todo' ? 'To-do' : cat === 'idea' ? 'Idea' : cat === 'remember' ? 'Remember' : 'Question'}</button>)}</div><div className="dn-editor-actions"><button type="button" className="dn-editor-font-toggle" title={`Font: ${settings.noteFont}. Click to change.`} onClick={() => { const nextFont = settings.noteFont === 'sans' ? 'serif' : settings.noteFont === 'serif' ? 'mono' : 'sans'; updateSettings({ noteFont: nextFont }) }}>Aa ({settings.noteFont === 'sans' ? 'Sans' : settings.noteFont === 'serif' ? 'Serif' : 'Mono'})</button><button type="button" className={`dn-action-btn ${selected.pinned ? 'active' : ''}`} onClick={() => updateSelected({ pinned: !selected.pinned })}>{selected.pinned ? 'Pinned' : 'Pin'}</button><button type="button" className="dn-action-btn" onClick={() => setShowHistory((value) => !value)}>History</button><button type="button" className="dn-action-btn dn-action-delete" onClick={() => deleteNote(selected.id, selectedPageUrl)} title="Move note to trash">Delete</button></div></div><input className="dn-title" placeholder="Title (optional)" value={selected.title} onChange={(event) => updateNote('title', event.target.value)} />{showHistory && <div className="dn-history-list">{(selected.history ?? []).length ? [...(selected.history ?? [])].reverse().map((revision) => <button key={revision.id} onClick={() => restoreRevision(revision)}><strong>{revision.title || 'Untitled note'}</strong><small>{new Date(revision.savedAt).toLocaleString()} · Restore</small></button>) : <small>No saved versions yet. Versions are captured during editing.</small>}</div>}<textarea className="dn-body" placeholder="Start writing…" value={selected.body} onChange={(event) => updateNote('body', event.target.value)} /><div className="dn-collection-assign">{collections.length ? collections.map((collection) => <label key={collection.id}><input type="checkbox" checked={selected.collectionIds?.includes(collection.id) ?? false} onChange={(event) => { const ids = selected.collectionIds ?? []; updateSelected({ collectionIds: event.target.checked ? [...ids, collection.id] : ids.filter((id) => id !== collection.id) }) }} />{collection.name}</label>) : <button className="dn-collection-add" onClick={createCollection}>＋ Create a collection</button>}</div><TagInput key={selected.id} tags={selected.tags ?? []} onCommit={(tags) => updateNote('tags', tags)} />{backlinks.length > 0 && <div className="dn-backlinks"><strong>Linked from</strong>{backlinks.map(({ note, url }) => <button key={note.id} onClick={() => { setSelectedPageUrl(url); setSelectedId(note.id) }}>{note.title || 'Untitled note'}</button>)}</div>}<div className="dn-editor-footer"><span><i />{saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Save failed · try editing again' : 'Saved locally'}</span></div></article> : null}
+        {selected ? <article className={`dn-editor dn-font-${settings.noteFont}`}><div className="dn-editor-top"><div className="dn-editor-category-pills">{(['general', 'todo', 'idea', 'remember', 'question'] as const).map((cat) => <button key={cat} type="button" className={`dn-cat-pill dn-cat-${cat} ${selected.category === cat || (!selected.category && cat === 'general') ? 'active' : ''}`} onClick={() => { updateSelected({ category: cat }); if (cat === 'todo' && !selected.body.trim()) { updateNote('body', '- [ ] ') } }}><span className={`dn-cat-dot dn-cat-${cat}`} />{cat === 'general' ? 'Note' : cat === 'todo' ? 'To-do' : cat === 'idea' ? 'Idea' : cat === 'remember' ? 'Remember' : 'Question'}</button>)}</div><div className="dn-editor-actions"><button type="button" className="dn-editor-font-toggle" title={`Font: ${settings.noteFont}. Click to change.`} onClick={() => { const nextFont = settings.noteFont === 'sans' ? 'serif' : settings.noteFont === 'serif' ? 'mono' : 'sans'; updateSettings({ noteFont: nextFont }) }}>Aa ({settings.noteFont === 'sans' ? 'Sans' : settings.noteFont === 'serif' ? 'Serif' : 'Mono'})</button><button type="button" className={`dn-action-btn ${selected.pinned ? 'active' : ''}`} onClick={() => updateSelected({ pinned: !selected.pinned })}>{selected.pinned ? 'Pinned' : 'Pin'}</button><button type="button" className="dn-action-btn" onClick={() => setShowHistory((value) => !value)}>History</button><button type="button" className="dn-action-btn dn-action-delete" onClick={() => deleteNote(selected.id, selectedPageUrl)} title="Move note to trash">Delete</button></div></div><input className="dn-title" placeholder="Title (optional)" value={selected.title} onChange={(event) => updateNote('title', event.target.value)} />{showHistory && <div className="dn-history-list">{(selected.history ?? []).length ? [...(selected.history ?? [])].reverse().map((revision) => <button key={revision.id} onClick={() => restoreRevision(revision)}><strong>{revision.title || 'Untitled note'}</strong><small>{new Date(revision.savedAt).toLocaleString()} · Restore</small></button>) : <small>No saved versions yet. Versions are captured during editing.</small>}</div>}{selected.category === 'todo' ? <TodoEditor body={selected.body} onChange={(body) => updateNote('body', body)} /> : <textarea className="dn-body" placeholder="Start writing…" value={selected.body} onChange={(event) => updateNote('body', event.target.value)} />}<div className="dn-collection-assign">{collections.length ? collections.map((collection) => <label key={collection.id}><input type="checkbox" checked={selected.collectionIds?.includes(collection.id) ?? false} onChange={(event) => { const ids = selected.collectionIds ?? []; updateSelected({ collectionIds: event.target.checked ? [...ids, collection.id] : ids.filter((id) => id !== collection.id) }) }} />{collection.name}</label>) : <button className="dn-collection-add" onClick={createCollection}>＋ Create a collection</button>}</div><TagInput key={selected.id} tags={selected.tags ?? []} onCommit={(tags) => updateNote('tags', tags)} />{backlinks.length > 0 && <div className="dn-backlinks"><strong>Linked from</strong>{backlinks.map(({ note, url }) => <button key={note.id} onClick={() => { setSelectedPageUrl(url); setSelectedId(note.id) }}>{note.title || 'Untitled note'}</button>)}</div>}<div className="dn-editor-footer"><span><i />{saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Save failed · try editing again' : 'Saved locally'}</span></div></article> : null}
       </div>}
     </aside>
   </>

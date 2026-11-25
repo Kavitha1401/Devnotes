@@ -16,8 +16,9 @@ function renderInline(text: string) {
   return text.split(/(\*\*[^*]+\*\*)/g).map((part, index) => part.length > 4 && part.startsWith('**') && part.endsWith('**') ? <b key={index}>{part.slice(2, -2)}</b> : part)
 }
 
-function CardBody({ body, editing, onChange, onEditingChange, onToggleTask }: {
+function CardBody({ body, category, editing, onChange, onEditingChange, onToggleTask }: {
   body: string
+  category?: NoteCategory
   editing: boolean
   onChange: (text: string) => void
   onEditingChange: (editing: boolean) => void
@@ -33,6 +34,7 @@ function CardBody({ body, editing, onChange, onEditingChange, onToggleTask }: {
   }
 
   const reading = !editing && draft.trim().length > 0
+  const isTodoCategory = category === 'todo'
 
   useLayoutEffect(() => {
     const el = ref.current
@@ -50,12 +52,13 @@ function CardBody({ body, editing, onChange, onEditingChange, onToggleTask }: {
     return <div className="dn-card-read" onClick={() => onEditingChange(true)}>
       {lines.map((line, index) => {
         const task = line.match(CARD_TASK_LINE)
-        if (task) {
-          const current = lines.slice(0, index).filter((previous) => CARD_TASK_LINE.test(previous)).length
-          const done = task[1] !== ' '
+        if (task || isTodoCategory) {
+          const done = task ? task[1] !== ' ' : false
+          const text = task ? task[2] : line.replace(/^\s*[-*+]\s+/, '')
+          if (!text.trim() && lines.length > 1) return null
           return <label key={index} className="dn-card-task" onClick={(event) => event.stopPropagation()}>
-            <input type="checkbox" checked={done} onChange={(event) => onToggleTask(current, event.target.checked)} />
-            <span className={done ? 'done' : ''}>{task[2]}</span>
+            <input type="checkbox" checked={done} onChange={(event) => onToggleTask(index, event.target.checked)} />
+            <span className={done ? 'done' : ''}>{text || 'Empty task'}</span>
           </label>
         }
         return line.trim() ? <p key={index}>{renderInline(line)}</p> : null
@@ -68,7 +71,7 @@ function CardBody({ body, editing, onChange, onEditingChange, onToggleTask }: {
     className="dn-card-input"
     value={draft}
     rows={1}
-    placeholder="Write a note..."
+    placeholder={isTodoCategory ? "Add task items..." : "Write a note..."}
     aria-label="Annotation note"
     onChange={(event) => {
       const val = event.target.value
@@ -93,6 +96,7 @@ export function AnnotationCard({
   item: _item,
   x,
   y,
+  title,
   body,
   category = 'general',
   editing,
@@ -110,6 +114,7 @@ export function AnnotationCard({
   item: Highlight
   x: number
   y: number
+  title?: string
   body: string
   category?: NoteCategory
   editing: boolean
@@ -233,6 +238,9 @@ export function AnnotationCard({
         </button>
       </div>
     </div>
-    <CardBody body={body} editing={editing} onChange={onChange} onEditingChange={onEditingChange} onToggleTask={onToggleTask} />
+    {title && title.trim() ? (
+      <div className="dn-card-title">{title.trim()}</div>
+    ) : null}
+    <CardBody body={body} category={category} editing={editing} onChange={onChange} onEditingChange={onEditingChange} onToggleTask={onToggleTask} />
   </section>
 }
