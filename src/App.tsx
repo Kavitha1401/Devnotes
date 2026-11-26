@@ -564,6 +564,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   const [, setOrphanedHighlights] = useState<string[]>([])
   const [highlightsForUrl, setHighlightsForUrl] = useState('')
   const highlightsRef = useRef(highlights)
+  const isApplyingRef = useRef(false)
   const [showAllNotes, setShowAllNotes] = useState(false)
   const [showArchived, setShowArchived] = useState(false)
   const [showFavorites, setShowFavorites] = useState(false)
@@ -750,7 +751,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       runApplyHighlights(pageHighlights)
       setHighlightsForUrl(pageUrl)
       observer = new MutationObserver((mutations) => {
-        if (isApplying) return
+        if (isApplying || isApplyingRef.current) return
         const isDevNotesNode = (node: Node) => {
           const element = node instanceof HTMLElement ? node : node.parentElement
           return Boolean(element && (element.hasAttribute('data-devnotes-highlight') || element.closest('#devnotes-root')))
@@ -1339,6 +1340,17 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     if (item.noteId) {
       const noteUrl = allNotes.find(({ note }) => note.id === item.noteId)?.url ?? pageUrl
       persist({ ...pages, [noteUrl]: (pages[noteUrl] ?? []).map((note) => note.id === item.noteId ? { ...note, category, updatedAt: Date.now() } : note) })
+    } else {
+      const now = Date.now()
+      const note: Note = { id: crypto.randomUUID(), title: '', body: '', category, tags: [], collectionIds: [], pinned: false, favorite: false, archived: false, createdAt: now, updatedAt: now }
+      persist({ ...pages, [pageUrl]: [note, ...(pages[pageUrl] ?? [])] })
+      const nextHighlights = highlights.map((entry) => entry.id === item.id ? { ...entry, noteId: note.id } : entry)
+      highlightsRef.current = nextHighlights
+      setHighlights(nextHighlights)
+      void readHighlights().then((saved) => {
+        saved[pageUrl] = nextHighlights
+        return writeHighlights(saved)
+      })
     }
   }
 
@@ -1358,6 +1370,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   }
 
   const deleteAnnotationCard = (id: string) => {
+    isApplyingRef.current = true
     highlightElements(id).forEach((mark) => {
       const parent = mark.parentNode
       if (!parent) return
@@ -1381,7 +1394,8 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
         [noteUrl]: (pages[noteUrl] ?? []).filter((note) => note.id !== target.noteId),
       })
     }
-    const nextHighlights = highlights.filter((item) => item.id !== id)
+    const nextHighlights = highlightsRef.current.filter((item) => item.id !== id)
+    highlightsRef.current = nextHighlights
     setHighlights(nextHighlights)
     void readHighlights().then((saved) => {
       saved[pageUrl] = nextHighlights
@@ -1389,27 +1403,31 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     })
     setEditingId((current) => current === id ? null : current)
     setAnnotationLayoutTick((t) => t + 1)
+    window.setTimeout(() => { isApplyingRef.current = false }, 50)
   }
 
   const removeHighlight = (id: string) => {
-    const target = highlights.find((item) => item.id === id)
-    if (!target) return
+    isApplyingRef.current = true
+    highlightElements(id).forEach((mark) => {
+      const parent = mark.parentNode
+      if (!parent) return
+      while (mark.firstChild) {
+        parent.insertBefore(mark.firstChild, mark)
+      }
+      mark.remove()
+      parent.normalize()
+    })
 
-    const hasLiveNote = Boolean(target.noteId && (pages[pageUrl] ?? []).some((n) => n.id === target.noteId))
-    if (hasLiveNote && (target.color !== 'transparent' || target.shape !== 'none')) {
-      highlightElements(id).forEach((mark) => {
-        mark.style.cssText = `${highlightStyle('none', 'transparent')} color:inherit;`
-      })
-      const nextHighlights: Highlight[] = highlights.map((item) => item.id === id ? { ...item, color: 'transparent', shape: 'none' as const } : item)
-      setHighlights(nextHighlights)
-      void readHighlights().then((saved) => {
-        saved[pageUrl] = nextHighlights
-        return writeHighlights(saved)
-      })
-      return
-    }
-
-    deleteAnnotationCard(id)
+    const nextHighlights = highlightsRef.current.filter((item) => item.id !== id)
+    highlightsRef.current = nextHighlights
+    setHighlights(nextHighlights)
+    void readHighlights().then((saved) => {
+      saved[pageUrl] = nextHighlights
+      return writeHighlights(saved)
+    })
+    setEditingId((current) => current === id ? null : current)
+    setAnnotationLayoutTick((t) => t + 1)
+    window.setTimeout(() => { isApplyingRef.current = false }, 50)
   }
 
   const exportJSON = async () => {
@@ -1913,8 +1931,6 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
           body={cleanNoteBody(note?.body ?? '')}
           category={note?.category}
           editing={editingId === item.id}
-          noteFont={settings.noteFont}
-          onFontChange={(font) => updateSettings({ noteFont: font })}
           themeMode={effectiveTheme}
           onChange={(text) => setAnnotationText(item, text)}
           onCategoryChange={(cat) => setAnnotationCategory(item, cat)}
@@ -2013,7 +2029,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
             </div>
           )
         })}</div>
-        {selected ? <article className={`dn-editor dn-font-${settings.noteFont}`}><div className="dn-editor-top"><div className="dn-editor-category-pills">{(['general', 'todo', 'idea', 'remember', 'question'] as const).map((cat) => <button key={cat} type="button" className={`dn-cat-pill dn-cat-${cat} ${selected.category === cat || (!selected.category && cat === 'general') ? 'active' : ''}`} onClick={() => { updateSelected({ category: cat }); if (cat === 'todo' && !selected.body.trim()) { updateNote('body', '- [ ] ') } }}><span className={`dn-cat-dot dn-cat-${cat}`} />{cat === 'general' ? 'Note' : cat === 'todo' ? 'To-do' : cat === 'idea' ? 'Idea' : cat === 'remember' ? 'Remember' : 'Question'}</button>)}</div><div className="dn-editor-actions"><button type="button" className="dn-editor-font-toggle" title={`Font: ${settings.noteFont}. Click to change.`} onClick={() => { const nextFont = settings.noteFont === 'sans' ? 'serif' : settings.noteFont === 'serif' ? 'mono' : 'sans'; updateSettings({ noteFont: nextFont }) }}>Aa ({settings.noteFont === 'sans' ? 'Sans' : settings.noteFont === 'serif' ? 'Serif' : 'Mono'})</button><button type="button" className={`dn-action-btn ${selected.pinned ? 'active' : ''}`} onClick={() => updateSelected({ pinned: !selected.pinned })}>{selected.pinned ? 'Pinned' : 'Pin'}</button><button type="button" className="dn-action-btn" onClick={() => setShowHistory((value) => !value)}>History</button><button type="button" className="dn-action-btn dn-action-delete" onClick={() => deleteNote(selected.id, selectedPageUrl)} title="Move note to trash">Delete</button></div></div><input className="dn-title" placeholder="Title (optional)" value={selected.title} onChange={(event) => updateNote('title', event.target.value)} />{showHistory && <div className="dn-history-list">{(selected.history ?? []).length ? [...(selected.history ?? [])].reverse().map((revision) => <button key={revision.id} onClick={() => restoreRevision(revision)}><strong>{revision.title || 'Untitled note'}</strong><small>{new Date(revision.savedAt).toLocaleString()} · Restore</small></button>) : <small>No saved versions yet. Versions are captured during editing.</small>}</div>}{selected.category === 'todo' ? <TodoEditor body={selected.body} onChange={(body) => updateNote('body', body)} /> : <textarea className="dn-body" placeholder="Start writing…" value={selected.body} onChange={(event) => updateNote('body', event.target.value)} />}<div className="dn-collection-assign">{collections.length ? collections.map((collection) => <label key={collection.id}><input type="checkbox" checked={selected.collectionIds?.includes(collection.id) ?? false} onChange={(event) => { const ids = selected.collectionIds ?? []; updateSelected({ collectionIds: event.target.checked ? [...ids, collection.id] : ids.filter((id) => id !== collection.id) }) }} />{collection.name}</label>) : <button className="dn-collection-add" onClick={createCollection}>＋ Create a collection</button>}</div><TagInput key={selected.id} tags={selected.tags ?? []} onCommit={(tags) => updateNote('tags', tags)} />{backlinks.length > 0 && <div className="dn-backlinks"><strong>Linked from</strong>{backlinks.map(({ note, url }) => <button key={note.id} onClick={() => { setSelectedPageUrl(url); setSelectedId(note.id) }}>{note.title || 'Untitled note'}</button>)}</div>}<div className="dn-editor-footer"><span><i />{saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Save failed · try editing again' : 'Saved locally'}</span></div></article> : null}
+        {selected ? <article className="dn-editor"><div className="dn-editor-top"><div className="dn-editor-category-pills">{(['general', 'todo', 'idea', 'remember', 'question'] as const).map((cat) => <button key={cat} type="button" className={`dn-cat-pill dn-cat-${cat} ${selected.category === cat || (!selected.category && cat === 'general') ? 'active' : ''}`} onClick={() => { updateSelected({ category: cat }); if (cat === 'todo' && !selected.body.trim()) { updateNote('body', '- [ ] ') } }}><span className={`dn-cat-dot dn-cat-${cat}`} />{cat === 'general' ? 'Note' : cat === 'todo' ? 'To-do' : cat === 'idea' ? 'Idea' : cat === 'remember' ? 'Remember' : 'Question'}</button>)}</div><div className="dn-editor-actions"><button type="button" className={`dn-action-btn ${selected.pinned ? 'active' : ''}`} onClick={() => updateSelected({ pinned: !selected.pinned })}>{selected.pinned ? 'Pinned' : 'Pin'}</button><button type="button" className="dn-action-btn" onClick={() => setShowHistory((value) => !value)}>History</button><button type="button" className="dn-action-btn dn-action-delete" onClick={() => deleteNote(selected.id, selectedPageUrl)} title="Move note to trash">Delete</button></div></div><input className="dn-title" placeholder="Title (optional)" value={selected.title} onChange={(event) => updateNote('title', event.target.value)} />{showHistory && <div className="dn-history-list">{(selected.history ?? []).length ? [...(selected.history ?? [])].reverse().map((revision) => <button key={revision.id} onClick={() => restoreRevision(revision)}><strong>{revision.title || 'Untitled note'}</strong><small>{new Date(revision.savedAt).toLocaleString()} · Restore</small></button>) : <small>No saved versions yet. Versions are captured during editing.</small>}</div>}{selected.category === 'todo' ? <TodoEditor body={selected.body} onChange={(body) => updateNote('body', body)} /> : <textarea className="dn-body" placeholder="Start writing…" value={selected.body} onChange={(event) => updateNote('body', event.target.value)} />}<div className="dn-collection-assign">{collections.length ? collections.map((collection) => <label key={collection.id}><input type="checkbox" checked={selected.collectionIds?.includes(collection.id) ?? false} onChange={(event) => { const ids = selected.collectionIds ?? []; updateSelected({ collectionIds: event.target.checked ? [...ids, collection.id] : ids.filter((id) => id !== collection.id) }) }} />{collection.name}</label>) : <button type="button" className="dn-collection-create-btn" onClick={createCollection}>+ Create a collection</button>}</div><TagInput key={selected.id} tags={selected.tags ?? []} onCommit={(tags) => updateNote('tags', tags)} />{backlinks.length > 0 && <div className="dn-backlinks"><strong>Linked from</strong>{backlinks.map(({ note, url }) => <button key={note.id} onClick={() => { setSelectedPageUrl(url); setSelectedId(note.id) }}>{note.title || 'Untitled note'}</button>)}</div>}<div className="dn-editor-footer"><span><i />{saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Save failed · try editing again' : 'Saved locally'}</span></div></article> : null}
       </div>}
     </aside>
   </>

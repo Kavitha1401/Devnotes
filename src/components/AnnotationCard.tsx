@@ -100,10 +100,8 @@ export function AnnotationCard({
   body,
   category = 'general',
   editing,
-  noteFont = 'sans',
   onChange,
   onCategoryChange,
-  onFontChange,
   onEditingChange,
   onToggleTask,
   onOpen,
@@ -118,11 +116,8 @@ export function AnnotationCard({
   body: string
   category?: NoteCategory
   editing: boolean
-  penSet?: string
-  noteFont?: string
   onChange: (text: string) => void
   onCategoryChange?: (category: NoteCategory) => void
-  onFontChange?: (font: 'sans' | 'serif' | 'mono') => void
   onEditingChange: (editing: boolean) => void
   onToggleTask: (taskIndex: number, done: boolean) => void
   onOpen: () => void
@@ -132,12 +127,14 @@ export function AnnotationCard({
 }) {
   const dragOffset = useRef<{ x: number; y: number } | null>(null)
   const isDragging = useRef(false)
-  const currentCategory = category || 'general'
+  const [overrideCategory, setOverrideCategory] = useState<NoteCategory | null>(null)
+  const currentCategory = overrideCategory ?? category ?? 'general'
   const config = CATEGORY_CONFIG[currentCategory]
 
   const cycleCategory = () => {
     const list: NoteCategory[] = ['general', 'todo', 'idea', 'remember', 'question']
     const next = list[(list.indexOf(currentCategory) + 1) % list.length]
+    setOverrideCategory(next)
     onCategoryChange?.(next)
   }
 
@@ -148,7 +145,7 @@ export function AnnotationCard({
   } as CSSProperties
 
   return <section
-    className={`dn-card dn-font-${noteFont} ${themeMode === 'dark' ? 'dn-dark' : themeMode === 'sepia' ? 'dn-theme-sepia' : ''}`}
+    className={`dn-card ${themeMode === 'dark' ? 'dn-dark' : themeMode === 'sepia' ? 'dn-theme-sepia' : ''}`}
     style={style}
     aria-label="Note"
   >
@@ -196,21 +193,6 @@ export function AnnotationCard({
         <span>{config.label}</span>
       </button>
       <div className="dn-card-header-right">
-        {onFontChange && (
-          <button
-            type="button"
-            className="dn-card-font-btn"
-            title={`Font: ${noteFont}. Click to change.`}
-            onClick={(event) => {
-              event.stopPropagation()
-              const fonts: ('sans' | 'serif' | 'mono')[] = ['sans', 'serif', 'mono']
-              const next = fonts[(fonts.indexOf(noteFont as any) + 1) % fonts.length]
-              onFontChange(next)
-            }}
-          >
-            Aa
-          </button>
-        )}
         <button
           type="button"
           className="dn-card-open-btn"
@@ -223,7 +205,6 @@ export function AnnotationCard({
         >
           ↗
         </button>
-        <span className="dn-card-drag-hint" title="Drag to move note">⋮⋮</span>
         <button
           type="button"
           className="dn-card-delete-icon"
@@ -241,6 +222,6 @@ export function AnnotationCard({
     {title && title.trim() ? (
       <div className="dn-card-title">{title.trim()}</div>
     ) : null}
-    <CardBody body={body} category={category} editing={editing} onChange={onChange} onEditingChange={onEditingChange} onToggleTask={onToggleTask} />
+    <CardBody body={body} category={currentCategory} editing={editing} onChange={onChange} onEditingChange={onEditingChange} onToggleTask={onToggleTask} />
   </section>
 }
