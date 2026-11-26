@@ -607,6 +607,14 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   const [toolbarAltHeld, setToolbarAltHeld] = useState(false)
   const captureSelectionRef = useRef<(action?: 'highlight' | 'note', color?: string, shape?: Highlight['shape']) => boolean>(() => false)
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [hidePageAnnotations, setHidePageAnnotations] = useState(false)
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('dn-hide-annotations', hidePageAnnotations)
+    return () => {
+      document.documentElement.classList.remove('dn-hide-annotations')
+    }
+  }, [hidePageAnnotations])
   const [annotationLayoutTick, setAnnotationLayoutTick] = useState(0)
   const [, setOrphanedHighlights] = useState<string[]>([])
   const [highlightsForUrl, setHighlightsForUrl] = useState('')
@@ -1214,7 +1222,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     let style = document.getElementById('devnotes-annotation-page-style') as HTMLStyleElement | null
     const owned = !style
     if (!style) { style = document.createElement('style'); style.id = 'devnotes-annotation-page-style'; document.documentElement.appendChild(style) }
-    style.textContent = `mark[data-devnotes-highlight]{cursor:pointer; transition:filter .12s;} mark[data-devnotes-highlight]:hover{filter:brightness(0.92);}`
+    style.textContent = `mark[data-devnotes-highlight]{cursor:pointer; transition:filter .12s;} mark[data-devnotes-highlight]:hover{filter:brightness(0.92);} .dn-hide-annotations mark[data-devnotes-highlight]{background:transparent !important; color:inherit !important; text-decoration:none !important; outline:none !important; border:none !important; box-shadow:none !important; cursor:auto !important; pointer-events:none !important;} .dn-hide-annotations .dn-page-layer{display:none !important;}`
     return () => { clearPageHighlights(); if (owned) style?.remove() }
   }, [])
 
@@ -1913,7 +1921,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     )}
 
     {/* In-page annotations layer: anchored in document space, moves naturally with document scrolling */}
-    <div className="dn-page-layer">
+    <div className="dn-page-layer" style={{ display: hidePageAnnotations ? 'none' : undefined }}>
       {/* Dotted connectors: absolute in page space, full document height */}
       <svg
         className="dn-annotation-connectors"
@@ -1959,12 +1967,44 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     {!open && !settings.hideLauncher && <button className={`dn-launcher ${settings.launcherPosition === 'bottom-left' ? 'dn-launcher-left' : ''} ${effectiveTheme === 'dark' ? 'dn-dark' : effectiveTheme === 'sepia' ? 'dn-theme-sepia' : ''}`} onClick={() => setOpen(true)} aria-label="Open DevNotes" title="DevNotes"><span className="dn-mark">d<span>.</span></span></button>}
 
     <aside className={`dn-panel dn-theme-${effectiveTheme} ${libraryOpen ? 'dn-library-open' : 'dn-page-view'} ${open ? 'is-open' : ''} ${settings.panelSide === 'left' ? 'dn-panel-left' : ''} ${darkTheme ? 'dn-dark' : ''}`} style={{ width: `min(${settings.panelWidth}px, 100vw)`, left: settings.panelSide === 'left' ? 0 : 'auto', right: settings.panelSide === 'right' ? 0 : 'auto', '--dn-text-scale': settings.textSize === 'small' ? 0.92 : settings.textSize === 'large' ? 1.15 : 1 } as CSSProperties} aria-label="DevNotes panel" aria-hidden={!open}>
+      <div
+        className="dn-panel-resize-handle"
+        onPointerDown={(event) => {
+          event.preventDefault()
+          const startX = event.clientX
+          const startWidth = settings.panelWidth
+          const onPointerMove = (e: PointerEvent) => {
+            const delta = settings.panelSide === 'left' ? e.clientX - startX : startX - e.clientX
+            const newWidth = Math.min(840, Math.max(320, Math.round(startWidth + delta)))
+            updateSettings({ panelWidth: newWidth })
+          }
+          const onPointerUp = () => {
+            window.removeEventListener('pointermove', onPointerMove)
+            window.removeEventListener('pointerup', onPointerUp)
+            window.removeEventListener('pointercancel', onPointerUp)
+          }
+          window.addEventListener('pointermove', onPointerMove)
+          window.addEventListener('pointerup', onPointerUp)
+          window.addEventListener('pointercancel', onPointerUp)
+        }}
+        title="Drag to resize panel width"
+      />
       <header className="dn-header">
         <div className="dn-brand"><span className="dn-brand-icon">d<span>.</span></span><span className="dn-brand-text">devnotes</span></div>
-        <button className="dn-header-btn" onClick={() => window.print()} title="Save or print page as PDF">Save PDF</button>
-        <button className="dn-library-toggle" onClick={() => { const next = !libraryOpen; setLibraryOpen(next); setShowAllNotes(next); if (!next) { setShowArchived(false); setShowFavorites(false); setShowTasks(false); setShowTrash(false) } }}>{libraryOpen ? 'This page' : 'Library'}</button>
-        <button className="dn-icon-button" onClick={() => setSettingsOpen(true)} aria-label="Open DevNotes settings" title="Settings">⚙</button>
-        <button className="dn-icon-button" onClick={() => setOpen(false)} aria-label="Close panel">×</button>
+        <div className="dn-header-actions">
+          <button
+            type="button"
+            className={`dn-header-btn ${hidePageAnnotations ? 'active' : ''}`}
+            onClick={() => setHidePageAnnotations((v) => !v)}
+            title={hidePageAnnotations ? "Show notes and highlights on page" : "Hide all notes and highlights on page"}
+          >
+            {hidePageAnnotations ? 'Show notes' : 'Hide notes'}
+          </button>
+          <button className="dn-header-btn" onClick={() => window.print()} title="Save or print page as PDF">Save PDF</button>
+          <button className="dn-library-toggle" onClick={() => { const next = !libraryOpen; setLibraryOpen(next); setShowAllNotes(next); if (!next) { setShowArchived(false); setShowFavorites(false); setShowTasks(false); setShowTrash(false) } }}>{libraryOpen ? 'This page' : 'Library'}</button>
+          <button className="dn-icon-button" onClick={() => setSettingsOpen(true)} aria-label="Open DevNotes settings" title="Settings">⚙</button>
+          <button className="dn-icon-button" onClick={() => setOpen(false)} aria-label="Close panel">×</button>
+        </div>
       </header>
 
       {(runtimeInvalid || saveState === 'error') && <div className="dn-recovery-banner" role="alert"><span>{runtimeInvalid ? 'DevNotes was updated, reload this tab.' : 'DevNotes could not save. Your text is still in memory.'}</span><button onClick={() => void copyUnsavedText()}>Copy notes</button></div>}
@@ -2163,7 +2203,14 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
           return (
             <div key={`${url}:${note.id}`} className={`dn-note-row-wrap dn-cat-${note.category || 'general'} ${selectedPageUrl === url && selectedId === note.id ? 'active' : ''}`}>
               {showAllNotes && <input className="dn-bulk-check" type="checkbox" aria-label={`Select ${noteTitle}`} checked={bulkSelection.includes(note.id)} onChange={(event) => setBulkSelection((ids) => event.target.checked ? [...ids, note.id] : ids.filter((id) => id !== note.id))} />}
-              <button className="dn-note-row" onClick={() => { setSelectedPageUrl(url); setSelectedId(note.id) }}>
+              <button className="dn-note-row" onClick={() => {
+                if (selectedPageUrl === url && selectedId === note.id) {
+                  setSelectedId(null)
+                } else {
+                  setSelectedPageUrl(url)
+                  setSelectedId(note.id)
+                }
+              }}>
                 <span className="dn-note-row-text">
                   <strong>{note.pinned ? <span className="dn-pinned-badge" title="Pinned note">● </span> : null}<SearchMatch text={noteTitle} query={query} /></strong>
                   <small>{showAllNotes || query ? safeHostname(url) + ' · ' : ''}{notePreview}</small>
@@ -2173,7 +2220,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
             </div>
           )
         })}</div>
-        {selected ? <article className="dn-editor"><div className="dn-editor-top"><div className="dn-editor-category-pills">{(['general', 'todo', 'idea', 'remember', 'question'] as const).map((cat) => <button key={cat} type="button" className={`dn-cat-pill dn-cat-${cat} ${selected.category === cat || (!selected.category && cat === 'general') ? 'active' : ''}`} onClick={() => { updateSelected({ category: cat }); if (cat === 'todo' && !selected.body.trim()) { updateNote('body', '- [ ] ') } }}><span className={`dn-cat-dot dn-cat-${cat}`} />{cat === 'general' ? 'Note' : cat === 'todo' ? 'To-do' : cat === 'idea' ? 'Idea' : cat === 'remember' ? 'Remember' : 'Question'}</button>)}</div><div className="dn-editor-actions"><button type="button" className={`dn-action-btn ${selected.pinned ? 'active' : ''}`} onClick={() => updateSelected({ pinned: !selected.pinned })}>{selected.pinned ? 'Pinned' : 'Pin'}</button><button type="button" className="dn-action-btn" onClick={() => setShowHistory((value) => !value)}>History</button><button type="button" className="dn-action-btn dn-action-delete" onClick={() => deleteNote(selected.id, selectedPageUrl)} title="Move note to trash">Delete</button></div></div><input className="dn-title" placeholder="Title (optional)" value={selected.title} onChange={(event) => updateNote('title', event.target.value)} />{showHistory && <div className="dn-history-list">{(selected.history ?? []).length ? [...(selected.history ?? [])].reverse().map((revision) => <button key={revision.id} onClick={() => restoreRevision(revision)}><strong>{revision.title || 'Untitled note'}</strong><small>{new Date(revision.savedAt).toLocaleString()} · Restore</small></button>) : <small>No saved versions yet. Versions are captured during editing.</small>}</div>}{selected.category === 'todo' ? <TodoEditor body={selected.body} onChange={(body) => updateNote('body', body)} /> : <textarea className="dn-body" placeholder="Start writing…" value={selected.body} onChange={(event) => updateNote('body', event.target.value)} />}<div className="dn-collection-assign">{collections.length ? collections.map((collection) => <label key={collection.id}><input type="checkbox" checked={selected.collectionIds?.includes(collection.id) ?? false} onChange={(event) => { const ids = selected.collectionIds ?? []; updateSelected({ collectionIds: event.target.checked ? [...ids, collection.id] : ids.filter((id) => id !== collection.id) }) }} />{collection.name}</label>) : <button type="button" className="dn-collection-create-btn" onClick={createCollection}>+ Create a collection</button>}</div><TagInput key={selected.id} tags={selected.tags ?? []} onCommit={(tags) => updateNote('tags', tags)} />{backlinks.length > 0 && <div className="dn-backlinks"><strong>Linked from</strong>{backlinks.map(({ note, url }) => <button key={note.id} onClick={() => { setSelectedPageUrl(url); setSelectedId(note.id) }}>{note.title || 'Untitled note'}</button>)}</div>}<div className="dn-editor-footer"><span><i />{saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Save failed · try editing again' : 'Saved locally'}</span></div></article> : null}
+        {selected ? <article className="dn-editor"><div className="dn-editor-top"><div className="dn-editor-category-pills">{(['general', 'todo', 'idea', 'remember', 'question'] as const).map((cat) => <button key={cat} type="button" className={`dn-cat-pill dn-cat-${cat} ${selected.category === cat || (!selected.category && cat === 'general') ? 'active' : ''}`} onClick={() => { updateSelected({ category: cat }); if (cat === 'todo' && !selected.body.trim()) { updateNote('body', '- [ ] ') } }}><span className={`dn-cat-dot dn-cat-${cat}`} />{cat === 'general' ? 'Note' : cat === 'todo' ? 'To-do' : cat === 'idea' ? 'Idea' : cat === 'remember' ? 'Remember' : 'Question'}</button>)}</div><div className="dn-editor-actions"><button type="button" className="dn-action-btn dn-action-close" onClick={() => setSelectedId(null)} title="Close note editor">Close</button><button type="button" className={`dn-action-btn ${selected.pinned ? 'active' : ''}`} onClick={() => updateSelected({ pinned: !selected.pinned })}>{selected.pinned ? 'Pinned' : 'Pin'}</button><button type="button" className="dn-action-btn" onClick={() => setShowHistory((value) => !value)}>History</button><button type="button" className="dn-action-btn dn-action-delete" onClick={() => deleteNote(selected.id, selectedPageUrl)} title="Move note to trash">Delete</button></div></div><input className="dn-title" placeholder="Title (optional)" value={selected.title} onChange={(event) => updateNote('title', event.target.value)} />{showHistory && <div className="dn-history-list">{(selected.history ?? []).length ? [...(selected.history ?? [])].reverse().map((revision) => <button key={revision.id} onClick={() => restoreRevision(revision)}><strong>{revision.title || 'Untitled note'}</strong><small>{new Date(revision.savedAt).toLocaleString()} · Restore</small></button>) : <small>No saved versions yet. Versions are captured during editing.</small>}</div>}{selected.category === 'todo' ? <TodoEditor body={selected.body} onChange={(body) => updateNote('body', body)} /> : <textarea className="dn-body" placeholder="Start writing…" value={selected.body} onChange={(event) => updateNote('body', event.target.value)} />}<div className="dn-collection-assign">{collections.length ? collections.map((collection) => <label key={collection.id}><input type="checkbox" checked={selected.collectionIds?.includes(collection.id) ?? false} onChange={(event) => { const ids = selected.collectionIds ?? []; updateSelected({ collectionIds: event.target.checked ? [...ids, collection.id] : ids.filter((id) => id !== collection.id) }) }} />{collection.name}</label>) : <button type="button" className="dn-collection-create-btn" onClick={createCollection}>+ Create a collection</button>}</div><TagInput key={selected.id} tags={selected.tags ?? []} onCommit={(tags) => updateNote('tags', tags)} />{backlinks.length > 0 && <div className="dn-backlinks"><strong>Linked from</strong>{backlinks.map(({ note, url }) => <button key={note.id} onClick={() => { setSelectedPageUrl(url); setSelectedId(note.id) }}>{note.title || 'Untitled note'}</button>)}</div>}<div className="dn-editor-footer"><span><i />{saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Save failed · try editing again' : 'Saved locally'}</span></div></article> : null}
       </div>}
     </aside>
   </>

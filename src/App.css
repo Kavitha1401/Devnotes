@@ -167,16 +167,46 @@ button {
 }
 
 /* Header */
+.dn-panel-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+  z-index: 25;
+  transition: background 0.15s ease;
+}
+
+.dn-panel:not(.dn-panel-left) .dn-panel-resize-handle {
+  left: 0;
+}
+
+.dn-panel.dn-panel-left .dn-panel-resize-handle {
+  right: 0;
+}
+
+.dn-panel-resize-handle:hover,
+.dn-panel-resize-handle:active {
+  background: var(--dn-accent);
+}
+
 .dn-header {
   height: 52px;
   flex: 0 0 52px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px;
+  padding: 0 14px;
   background: var(--dn-surface);
   border-bottom: 1px solid var(--dn-border);
   gap: 8px;
+}
+
+.dn-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .dn-brand {
@@ -228,6 +258,12 @@ button {
 }
 
 .dn-header-btn:hover {
+  background: var(--dn-bg);
+}
+
+.dn-header-btn.active {
+  border-color: var(--dn-accent);
+  color: var(--dn-accent);
   background: var(--dn-bg);
 }
 
@@ -844,6 +880,10 @@ button {
   background: var(--dn-bg);
 }
 
+.dn-action-close {
+  font-weight: 600;
+}
+
 .dn-action-delete:hover {
   border-color: #ef4444;
   color: #ef4444;
@@ -1004,7 +1044,14 @@ button {
 .dn-card {
   position: absolute;
   z-index: 2147483645;
-  width: 240px;
+  width: 260px;
+  min-width: 180px;
+  max-width: 800px;
+  min-height: 70px;
+  max-height: 800px;
+  resize: both;
+  overflow: auto;
+  box-sizing: border-box;
   padding: 8px 10px 10px;
   font-family: var(--dn-font);
   font-size: 13px;
@@ -1908,6 +1955,22 @@ button {
 }
 
 
+
+/* Suppression of annotations when hidden */
+.dn-hide-annotations mark[data-devnotes-highlight] {
+  background: transparent !important;
+  color: inherit !important;
+  text-decoration: none !important;
+  outline: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  cursor: auto !important;
+  pointer-events: none !important;
+}
+
+.dn-hide-annotations .dn-page-layer {
+  display: none !important;
+}
 
 /* Print styling */
 @media print {
