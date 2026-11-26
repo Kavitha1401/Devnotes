@@ -185,21 +185,34 @@ button {
   gap: 8px;
   font-weight: 600;
   font-size: 14px;
+  line-height: 1;
   letter-spacing: -0.3px;
   color: var(--dn-text);
+  user-select: none;
 }
 
 .dn-brand-icon {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
   border-radius: 6px;
   background: var(--dn-bg);
+  border: 1px solid var(--dn-border);
   color: var(--dn-text);
   font-family: var(--dn-font-serif);
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 700;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.dn-brand-text {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--dn-text);
 }
 
 .dn-header-btn {
@@ -451,6 +464,57 @@ button {
   display: none !important;
 }
 
+.dn-tag-browser {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 16px 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.dn-tag-browser::-webkit-scrollbar {
+  display: none;
+}
+
+.dn-tag-browser-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--dn-muted);
+  flex-shrink: 0;
+}
+
+.dn-tag-browser-list {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+
+.dn-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--dn-muted);
+  background: var(--dn-surface);
+  border: 1px solid var(--dn-border);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+
+.dn-tag-chip:hover {
+  color: var(--dn-accent);
+  border-color: var(--dn-accent);
+  background: var(--dn-bg);
+}
+
 /* Page heading */
 .dn-page-heading {
   padding: 4px 16px 10px;
@@ -606,11 +670,19 @@ button {
   display: flex;
   align-items: center;
   border: 1px solid var(--dn-border);
+  border-left: 3.5px solid var(--dn-cat-general);
   border-radius: 8px;
   background: var(--dn-surface);
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition: all 0.15s ease;
   position: relative;
+  overflow: hidden;
 }
+
+.dn-note-row-wrap.dn-cat-idea { border-left-color: var(--dn-cat-idea); }
+.dn-note-row-wrap.dn-cat-todo { border-left-color: var(--dn-cat-todo); }
+.dn-note-row-wrap.dn-cat-remember { border-left-color: var(--dn-cat-remember); }
+.dn-note-row-wrap.dn-cat-question { border-left-color: var(--dn-cat-question); }
+.dn-note-row-wrap.dn-cat-general { border-left-color: var(--dn-cat-general); }
 
 .dn-note-row-wrap:hover {
   background: var(--dn-bg);
@@ -618,16 +690,16 @@ button {
 
 .dn-note-row-wrap.active {
   background: var(--dn-bg);
-  border-color: var(--dn-accent);
+  box-shadow: 0 0 0 1px var(--dn-border);
 }
 
 .dn-note-row {
   flex: 1;
   min-width: 0;
-  padding: 8px 10px;
+  padding: 8px 12px;
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: 6px;
   border: 0;
   background: transparent;
   text-align: left;
@@ -1535,6 +1607,51 @@ button {
   background: var(--dn-surface);
 }
 
+.dn-tag-input-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dn-tag-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.dn-tag-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  background: var(--dn-bg);
+  border: 1px solid var(--dn-border);
+  color: var(--dn-text);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.dn-tag-remove-btn {
+  border: 0;
+  background: transparent;
+  color: var(--dn-muted);
+  cursor: pointer;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  line-height: 1;
+  border-radius: 50%;
+  width: 14px;
+  height: 14px;
+  transition: color 0.15s ease;
+}
+
+.dn-tag-remove-btn:hover {
+  color: #ef4444;
+}
+
 .dn-tags {
   display: block;
   width: 100%;
@@ -1567,6 +1684,7 @@ button {
   flex-direction: column;
   background: var(--dn-surface);
   color: var(--dn-text);
+  font-family: var(--dn-font);
 }
 
 .dn-settings-heading {
@@ -1580,16 +1698,18 @@ button {
 .dn-settings-heading > div {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
 .dn-settings-heading strong {
+  display: block;
   font-size: 15px;
   font-weight: 600;
   color: var(--dn-text);
 }
 
 .dn-settings-heading span {
+  display: block;
   font-size: 12px;
   color: var(--dn-muted);
 }
@@ -1599,20 +1719,26 @@ button {
   padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
 }
 
 .dn-settings-content > label {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  font-size: 13px;
+  color: var(--dn-text);
+}
+
+.dn-settings-content label span {
+  color: var(--dn-muted);
   font-size: 12px;
 }
 
 .dn-settings-content select, .dn-settings-content input[type="text"] {
   border: 1px solid var(--dn-border);
   border-radius: 6px;
-  padding: 4px 8px;
+  padding: 5px 10px;
   background: var(--dn-bg);
   color: var(--dn-text);
   font-size: 12px;
@@ -1625,26 +1751,42 @@ button {
 .dn-settings-check {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   cursor: pointer;
+  font-size: 13px;
+  color: var(--dn-text);
 }
 
 .dn-settings-check input {
   accent-color: var(--dn-accent);
 }
 
+.dn-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--dn-text);
+}
+
 .dn-setting-colors {
   display: flex;
-  gap: 6px;
-  padding: 4px 0;
+  gap: 8px;
+  padding: 2px 0;
 }
 
 .dn-setting-colors button {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border: 2px solid var(--dn-surface);
   border-radius: 50%;
   box-shadow: 0 0 0 1px var(--dn-border);
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+.dn-setting-colors button:hover {
+  transform: scale(1.1);
 }
 
 .dn-setting-colors button.selected {
@@ -1655,39 +1797,114 @@ button {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding-top: 12px;
+  padding-top: 14px;
   border-top: 1px solid var(--dn-border);
   font-size: 12px;
 }
 
-.dn-site-settings strong, .dn-blocklist strong {
+.dn-site-settings strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dn-text);
+}
+
+.dn-blocklist-add {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 14px;
+  border-top: 1px solid var(--dn-border);
+}
+
+.dn-blocklist-add label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dn-text);
+}
+
+.dn-blocklist-add-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.dn-blocklist-add input {
+  flex: 1;
+  border: 1px solid var(--dn-border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  background: var(--dn-bg);
+  color: var(--dn-text);
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.dn-blocklist-add input:focus {
+  border-color: var(--dn-accent);
+}
+
+.dn-blocklist-add button {
+  border: 1px solid var(--dn-border);
+  border-radius: 6px;
+  padding: 6px 14px;
+  background: var(--dn-surface);
+  color: var(--dn-text);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.dn-blocklist-add button:hover {
+  background: var(--dn-bg);
+  border-color: var(--dn-accent);
+  color: var(--dn-accent);
+}
+
+.dn-blocklist-section-title {
   display: block;
   font-size: 12px;
   font-weight: 600;
   color: var(--dn-text);
-  margin-bottom: 2px;
+  margin-top: 6px;
 }
 
-.dn-blocklist > div {
+.dn-blocklist-empty {
+  display: block;
+  color: var(--dn-muted);
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+
+.dn-blocklist-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 0;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--dn-border);
 }
 
-.dn-blocklist > small {
-  display: block;
-  color: var(--dn-muted);
-  margin-bottom: 6px;
+.dn-blocklist-item:last-child {
+  border-bottom: 0;
 }
 
-.dn-site-settings button, .dn-blocklist button, .dn-blocklist-add button {
+.dn-site-settings button, .dn-blocklist button {
   border: 1px solid var(--dn-border);
   border-radius: 6px;
-  padding: 4px 8px;
+  padding: 5px 10px;
   background: var(--dn-surface);
   color: var(--dn-text);
   font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.dn-site-settings button:hover, .dn-blocklist button:hover {
+  background: var(--dn-bg);
+  border-color: var(--dn-accent);
 }
 
 

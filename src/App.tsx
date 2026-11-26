@@ -21,10 +21,36 @@ const SCHEMA_VERSION_KEY = 'devnotes-schema-version'
 const CURRENT_SCHEMA_VERSION = 1
 const isIncognitoContext = () => typeof chrome !== 'undefined' && Boolean(chrome.extension?.inIncognitoContext)
 const NOTE_TEMPLATES = {
-  'Bug report': '# Bug report\n\n## Summary\n\n## Steps to reproduce\n1. \n\n## Expected behavior\n\n## Actual behavior\n\n## Environment\n',
-  'Meeting notes': '# Meeting notes\n\nDate: \nAttendees: \n\n## Agenda\n\n## Notes\n\n## Decisions\n\n## Action items\n- [ ] \n',
-  'Reading note': '# Reading note\n\n## Summary\n\n## Key ideas\n- \n\n## Quotes\n> \n\n## My thoughts\n\n## Follow-up\n',
+  'Bug report': 'Summary:\n\nSteps to reproduce:\n1. \n2. \n\nExpected behavior:\n\nActual behavior:\n\nEnvironment:\n',
+  'Meeting notes': 'Date: \nAttendees: \n\nAgenda:\n\nDiscussion:\n\nDecisions:\n\nAction items:\n',
+  'Reading note': 'Summary:\n\nKey takeaways:\n\nQuotes:\n\nMy thoughts:\n\nNext steps:\n',
 } as const
+
+function stripMarkdownForUI(text: string): string {
+  return text
+    .replace(/^(\s*[-*+]\s+\[[ xX]\]|\s*[-*+]\s+|#+\s+|>+\s*)/gm, '')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .trim()
+}
+
+function cleanDisplayTitle(note: Note): string {
+  if (note.title && note.title.trim()) {
+    return stripMarkdownForUI(note.title)
+  }
+  const firstLine = note.body.trim().split('\n')[0] ?? ''
+  const cleaned = stripMarkdownForUI(firstLine).slice(0, 50)
+  return cleaned || 'Untitled note'
+}
+
+function cleanDisplayPreview(note: Note): string {
+  const content = note.title && note.title.trim()
+    ? note.body
+    : note.body.trim().split('\n').slice(1).join(' ')
+  const cleaned = stripMarkdownForUI(content).slice(0, 58)
+  return cleaned || 'No content yet'
+}
 function pruneTombstones(value: Record<string, number>): Record<string, number> {
   const cutoff = Date.now() - 180 * 24 * 60 * 60 * 1000
   return Object.fromEntries(Object.entries(value).filter(([, deletedAt]) => typeof deletedAt === 'number' && deletedAt >= cutoff).sort((a, b) => a[1] - b[1]).slice(-2_000))
@@ -1934,7 +1960,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
 
     <aside className={`dn-panel dn-theme-${effectiveTheme} ${libraryOpen ? 'dn-library-open' : 'dn-page-view'} ${open ? 'is-open' : ''} ${settings.panelSide === 'left' ? 'dn-panel-left' : ''} ${darkTheme ? 'dn-dark' : ''}`} style={{ width: `min(${settings.panelWidth}px, 100vw)`, left: settings.panelSide === 'left' ? 0 : 'auto', right: settings.panelSide === 'right' ? 0 : 'auto', '--dn-text-scale': settings.textSize === 'small' ? 0.92 : settings.textSize === 'large' ? 1.15 : 1 } as CSSProperties} aria-label="DevNotes panel" aria-hidden={!open}>
       <header className="dn-header">
-        <div className="dn-brand"><span className="dn-brand-icon">d<span>.</span></span><span>devnotes</span></div>
+        <div className="dn-brand"><span className="dn-brand-icon">d<span>.</span></span><span className="dn-brand-text">devnotes</span></div>
         <button className="dn-header-btn" onClick={() => window.print()} title="Save or print page as PDF">Save PDF</button>
         <button className="dn-library-toggle" onClick={() => { const next = !libraryOpen; setLibraryOpen(next); setShowAllNotes(next); if (!next) { setShowArchived(false); setShowFavorites(false); setShowTasks(false); setShowTrash(false) } }}>{libraryOpen ? 'This page' : 'Library'}</button>
         <button className="dn-icon-button" onClick={() => setSettingsOpen(true)} aria-label="Open DevNotes settings" title="Settings">⚙</button>
@@ -2030,8 +2056,8 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
             </div>
             <form className="dn-blocklist-add" onSubmit={(event) => { event.preventDefault(); addBlockedHost(blocklistDraft); setBlocklistDraft('') }}>
               <label htmlFor="dn-block-host">Block another site</label>
-              <div>
-                <input id="dn-block-host" value={blocklistDraft} onChange={(event) => setBlocklistDraft(event.target.value)} placeholder="example.com" />
+              <div className="dn-blocklist-add-row">
+                <input type="text" id="dn-block-host" value={blocklistDraft} onChange={(event) => setBlocklistDraft(event.target.value)} placeholder="example.com" />
                 <button type="submit">Add</button>
               </div>
             </form>
@@ -2107,7 +2133,24 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
         </div>
       </div>
       {showAllNotes && <div className="dn-collection-bar"><select aria-label="Filter by collection" value={collectionFilter} onChange={(event) => setCollectionFilter(event.target.value)}><option value="">All collections</option>{collections.map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select><input className="dn-domain-filter" aria-label="Filter by website domain" placeholder="Domain" value={domainFilter} onChange={(event) => setDomainFilter(event.target.value)} /><select aria-label="Sort notes" value={sortMode} onChange={(event) => setSortMode(event.target.value as typeof sortMode)}><option value="updated">Updated</option><option value="created">Created</option><option value="title">Title</option></select><button className="dn-collection-add" onClick={createCollection} title="Add collection">＋</button></div>}
-      {showAllNotes && availableTags.length > 0 && <div className="dn-tag-browser"><strong>Tags</strong>{availableTags.map((tag) => <button key={tag} onClick={() => setQuery((value) => `${value} tag:"${tag}"`.trim())}>{tag}</button>)}</div>}
+      {showAllNotes && availableTags.length > 0 && (
+        <div className="dn-tag-browser">
+          <span className="dn-tag-browser-label">Tags</span>
+          <div className="dn-tag-browser-list">
+            {availableTags.map((tag) => (
+              <button
+                key={tag}
+                type="button"
+                className="dn-tag-chip"
+                onClick={() => setQuery((value) => `${value} tag:"${tag}"`.trim())}
+                title={`Filter by tag ${tag}`}
+              >
+                #{tag}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       {showAllNotes && bulkSelection.length > 0 && <div className="dn-bulk-actions"><strong>{bulkSelection.length} selected</strong><button onClick={() => setBulkTagEditing(true)}>Add tags</button><button onClick={() => bulkUpdate((note) => ({ ...note, archived: true }))}>Archive</button><button onClick={() => setBulkSelection([])}>Clear</button></div>}
       {bulkTagEditing && <form className="dn-new-collection" onSubmit={(event) => { event.preventDefault(); applyBulkTags() }}><input autoFocus aria-label="Tags to add" placeholder="Tags, separated by commas" value={bulkTagDraft} onChange={(event) => setBulkTagDraft(event.target.value)} /><button type="submit">Apply</button><button type="button" onClick={() => { setBulkTagEditing(false); setBulkTagDraft('') }}>Cancel</button></form>}
       {addingCollection && <form className="dn-new-collection" onSubmit={(event) => { event.preventDefault(); saveCollection() }}><input autoFocus aria-label="Collection name" placeholder="Collection name..." value={collectionDraft} onChange={(event) => setCollectionDraft(event.target.value)} /><button type="submit">Create</button><button type="button" onClick={() => { setAddingCollection(false); setCollectionDraft('') }}>Cancel</button></form>}
@@ -2115,16 +2158,15 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       {statusMessage && <div className="dn-import-status" role="status">{statusMessage}<button aria-label="Dismiss message" onClick={() => setStatusMessage('')}>×</button></div>}
       {!ready ? <div className="dn-empty">Loading your notes…</div> : showTrash ? <div className="dn-trash-list">{trash.length ? trash.map((entry) => <div className="dn-trash-row" key={entry.note.id}><span><strong>{entry.note.title || 'Untitled note'}</strong><small>{safeHostname(entry.url)}</small></span><button className="dn-preview-toggle" onClick={() => restoreFromTrash(entry)}>Restore</button><button className="dn-delete" onClick={() => { const next = trash.filter((item) => item.note.id !== entry.note.id); setTrash(next); void writeTrash(next) }}>Delete forever</button></div>) : <div className="dn-empty">Trash is empty.</div>}</div> : !showAllNotes && notes.length === 0 && !query.trim() ? <div className="dn-empty-state"><div className="dn-empty-icon">✎</div><strong>A fresh page to think on.</strong><p>Keep the useful bits, questions, and ideas you find here.</p><button onClick={() => createNote()}>Write your first note <span>→</span></button><div className="dn-hint">Select any text on the page to highlight or attach a note.</div></div> : filteredNotes.length === 0 ? <div className="dn-empty">{query.trim() ? `No notes match “${query}”.` : 'No notes here yet.'}</div> : <div className="dn-content">
         <div className="dn-note-list">{filteredNotes.map(({ note, url }) => {
-          const noteTitle = note.title.trim() || note.body.trim().split('\n')[0]?.trim().slice(0, 50) || 'Untitled note'
-          const notePreview = (note.title.trim() ? note.body : note.body.trim().split('\n').slice(1).join(' ')).trim().replace(/^>\s?/gm, '').slice(0, 58) || (note.title.trim() ? 'No content yet' : '')
+          const noteTitle = cleanDisplayTitle(note)
+          const notePreview = cleanDisplayPreview(note)
           return (
-            <div key={`${url}:${note.id}`} className={`dn-note-row-wrap ${selectedPageUrl === url && selectedId === note.id ? 'active' : ''}`}>
+            <div key={`${url}:${note.id}`} className={`dn-note-row-wrap dn-cat-${note.category || 'general'} ${selectedPageUrl === url && selectedId === note.id ? 'active' : ''}`}>
               {showAllNotes && <input className="dn-bulk-check" type="checkbox" aria-label={`Select ${noteTitle}`} checked={bulkSelection.includes(note.id)} onChange={(event) => setBulkSelection((ids) => event.target.checked ? [...ids, note.id] : ids.filter((id) => id !== note.id))} />}
               <button className="dn-note-row" onClick={() => { setSelectedPageUrl(url); setSelectedId(note.id) }}>
-                <span className={`dn-cat-dot dn-cat-${note.category || 'general'}`} />
                 <span className="dn-note-row-text">
                   <strong>{note.pinned ? <span className="dn-pinned-badge" title="Pinned note">● </span> : null}<SearchMatch text={noteTitle} query={query} /></strong>
-                  <small>{showAllNotes || query ? safeHostname(url) + ' · ' : ''}{notePreview || 'Empty note'}</small>
+                  <small>{showAllNotes || query ? safeHostname(url) + ' · ' : ''}{notePreview}</small>
                 </span>
               </button>
               <button className="dn-row-delete-btn" title="Delete note" aria-label="Delete note" onClick={(event) => { event.stopPropagation(); deleteNote(note.id, url) }}>×</button>
