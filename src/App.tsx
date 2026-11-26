@@ -2,8 +2,7 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } f
 import type { CSSProperties } from 'react'
 import { DEFAULT_BLOCKED_HOSTS, DEFAULT_SETTINGS, HIGHLIGHT_COLORS, SETTINGS_KEY, hostMatches, isHostDisabled, normalizeHost, normalizeSettings, readSettings, writeSettings, type DevNotesSettings } from './settings'
 import { cleanNoteBody, isRecord, mergePages, migratePages, normalizePageUrl, removeDeletedPages } from './storage/core'
-import { validateBackup } from './storage/backup'
-import type { BackupFile, Collection, Highlight, Note, NoteCategory, NotePlacement, PageMeta, PageNotes, PageTask, Revision, TrashEntry } from './storage/types'
+import type { Collection, Highlight, Note, NoteCategory, NotePlacement, PageMeta, PageNotes, PageTask, Revision, TrashEntry } from './storage/types'
 import { findBestAnchor } from './highlights/anchor'
 import { TagInput } from './components/TagInput'
 import { AnnotationCard } from './components/AnnotationCard'
@@ -583,9 +582,8 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   const [query, setQuery] = useState('')
   const deferredQuery = useDeferredValue(query)
   const [saveState, setSaveState] = useState<'saved' | 'saving' | 'error'>('saved')
-  const [importError, setImportError] = useState('')
+  const [statusMessage, setStatusMessage] = useState('')
   const searchRef = useRef<HTMLInputElement>(null)
-  const importRef = useRef<HTMLInputElement>(null)
   const initialPageUrlRef = useRef(pageUrl)
   const pagesDirtyRef = useRef(false)
   const pagesVersionRef = useRef(0)
@@ -643,7 +641,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       if (!active) return
       setRuntimeInvalid(true)
       setReady(true)
-      setImportError('DevNotes could not read local storage. Your edits will stay in memory until you copy them.')
+      setStatusMessage('DevNotes could not read local storage. Your edits will stay in memory until you copy them.')
     })
     void readCollections().then((saved) => { if (active) { setCollections(saved); setCollectionsReady(true) } })
     void readSettings().then((saved) => {
@@ -1236,7 +1234,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   const saveCollection = () => {
     const name = collectionDraft.trim()
     if (!name) return
-    if (collections.some((collection) => collection.name.toLowerCase() === name.toLowerCase())) { setImportError('A collection with that name already exists.'); return }
+    if (collections.some((collection) => collection.name.toLowerCase() === name.toLowerCase())) { setStatusMessage('A collection with that name already exists.'); return }
     collectionsDirtyRef.current = true
     setCollections((items) => [...items, { id: crypto.randomUUID(), name, createdAt: Date.now() }])
     setCollectionDraft('')
@@ -1430,65 +1428,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     window.setTimeout(() => { isApplyingRef.current = false }, 50)
   }
 
-  const exportJSON = async () => {
-    const backup: BackupFile = { format: 'devnotes-backup', version: 1, pages, collections, highlights: await readHighlights(), trash, settings, pageMeta: allPageMeta }
-    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json;charset=utf-8' })
-    const link = document.createElement('a')
-    link.href = URL.createObjectURL(blob)
-    link.download = `devnotes-backup-${new Date().toISOString().slice(0, 10)}.json`
-    link.click()
-    window.setTimeout(() => URL.revokeObjectURL(link.href), 1000)
-  }
 
-  const importJSON = async (file?: File) => {
-    if (!file) return
-    try {
-      const backup = validateBackup(JSON.parse(await file.text()))
-      if (!backup) { setImportError('That file is not a valid DevNotes backup.'); return }
-      const importedPages = backup.pages
-      const importedCollections = backup.collections
-      const importedSettings = backup.settings ?? settings
-      const importedTrash = boundedTrash(backup.trash, importedSettings.trashRetentionDays)
-      const importedHighlights = backup.highlights
-      const importedPageMeta = backup.pageMeta ?? {}
-      clearPageHighlights()
-      setPages(importedPages)
-      pagesVersionRef.current += 1
-      setDeletedNotes({})
-      setCollections(importedCollections)
-      setTrash(importedTrash)
-      setSettings(importedSettings)
-      setAllPageMeta(importedPageMeta)
-      settingsVersionRef.current += 1
-      settingsDirtyRef.current = false
-      setHighlights(importedHighlights[pageUrl] ?? [])
-      highlightsRef.current = importedHighlights[pageUrl] ?? []
-      setOrphanedHighlights([])
-      setHighlightsForUrl(pageUrl)
-      setSelectedPageUrl(pageUrl)
-      setSelectedId(importedPages[pageUrl]?.[0]?.id ?? null)
-      pagesDirtyRef.current = false
-      collectionsDirtyRef.current = false
-      highlightsDirtyRef.current = false
-      if (typeof chrome !== 'undefined' && chrome.storage?.local && !isIncognitoContext()) {
-        await new Promise<void>((resolve, reject) => chrome.storage.local.set({ [STORAGE_KEY]: importedPages, [DELETED_KEY]: {}, [COLLECTION_KEY]: importedCollections, [TRASH_KEY]: importedTrash, [HIGHLIGHT_KEY]: importedHighlights, [SETTINGS_KEY]: importedSettings, [PAGEMETA_KEY]: importedPageMeta }, () => chrome.runtime.lastError ? reject(new Error(chrome.runtime.lastError.message)) : resolve()))
-      } else if (isIncognitoContext()) {
-        // The imported data stays in this panel's in-memory state only.
-      } else if (typeof chrome !== 'undefined' && chrome.runtime) {
-        throw new Error('Chrome storage is unavailable.')
-      } else {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(importedPages))
-        localStorage.setItem(DELETED_KEY, '{}')
-        localStorage.setItem(COLLECTION_KEY, JSON.stringify(importedCollections))
-        localStorage.setItem(TRASH_KEY, JSON.stringify(importedTrash))
-        localStorage.setItem(HIGHLIGHT_KEY, JSON.stringify(importedHighlights))
-        localStorage.setItem(SETTINGS_KEY, JSON.stringify(importedSettings))
-        localStorage.setItem(PAGEMETA_KEY, JSON.stringify(importedPageMeta))
-      }
-      setOrphanedHighlights(applyHighlights(importedHighlights[pageUrl] ?? []))
-      setImportError('Backup restored.')
-    } catch { setImportError('Could not read this backup file.') }
-  }
 
   const captureSelection = useCallback((action: 'highlight' | 'note' = 'note', color = settings.highlightColor, shape?: Highlight['shape']): boolean => {
     const selection = window.getSelection()
@@ -1770,9 +1710,9 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       : Object.entries(pages).flatMap(([url, items]) => items.map((note) => `${note.title || 'Untitled note'}\n${url}\n\n${note.body}`)).join('\n\n---\n\n')
     try {
       await navigator.clipboard.writeText(value || 'No note text is currently in memory.')
-      setImportError('Copied the current in-memory notes.')
+      setStatusMessage('Copied the current in-memory notes.')
     } catch {
-      setImportError('Clipboard access is unavailable. Select and copy the note text manually.')
+      setStatusMessage('Clipboard access is unavailable. Select and copy the note text manually.')
     }
   }
 
@@ -1997,20 +1937,17 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       <div className="dn-page-heading">
         <h1>{showTrash ? 'Trash' : showArchived ? 'Archived' : showTasks ? 'Tasks' : showFavorites ? 'Favorites' : showAllNotes ? 'All notes' : 'Page notes'} <span>{showTrash ? trash.length : showArchived ? allNotes.filter(({ note }) => note.archived).length : showTasks ? allNotes.filter(({ note }) => !note.archived && /(?:^|\n)\s*[-*+]\s*\[ \]/.test(note.body)).length : showFavorites ? allNotes.filter(({ note }) => note.favorite && !note.archived).length : showAllNotes ? allNotes.filter(({ note }) => !note.archived).length : notes.filter((note) => !note.archived).length}</span></h1>
         <div className="dn-heading-actions">
-          <button className="dn-export" onClick={() => void exportJSON()} title="Export JSON backup">Backup</button>
-          <button className="dn-export" onClick={() => importRef.current?.click()} title="Import JSON backup">Import</button>
-          <input ref={importRef} type="file" accept="application/json,.json" hidden onChange={(event) => { void importJSON(event.target.files?.[0]); event.currentTarget.value = '' }} />
           <select className="dn-template-select" aria-label="Create note from template" value="" onChange={(event) => { if (event.target.value) createFromTemplate(event.target.value as keyof typeof NOTE_TEMPLATES) }}><option value="">Template…</option>{Object.keys(NOTE_TEMPLATES).map((name) => <option key={name} value={name}>{name}</option>)}</select>
           <button className="dn-new" onClick={() => createNote()}>+ New note</button>
         </div>
       </div>
-      {showAllNotes && <div className="dn-collection-bar"><select aria-label="Filter by collection" value={collectionFilter} onChange={(event) => setCollectionFilter(event.target.value)}><option value="">All collections</option>{collections.map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select><input className="dn-domain-filter" aria-label="Filter by website domain" placeholder="Domain" value={domainFilter} onChange={(event) => setDomainFilter(event.target.value)} /><select aria-label="Sort notes" value={sortMode} onChange={(event) => setSortMode(event.target.value as typeof sortMode)}><option value="updated">Updated</option><option value="created">Created</option><option value="title">Title</option></select><button className="dn-collection-add" onClick={createCollection}>＋</button></div>}
+      {showAllNotes && <div className="dn-collection-bar"><select aria-label="Filter by collection" value={collectionFilter} onChange={(event) => setCollectionFilter(event.target.value)}><option value="">All collections</option>{collections.map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select><input className="dn-domain-filter" aria-label="Filter by website domain" placeholder="Domain" value={domainFilter} onChange={(event) => setDomainFilter(event.target.value)} /><select aria-label="Sort notes" value={sortMode} onChange={(event) => setSortMode(event.target.value as typeof sortMode)}><option value="updated">Updated</option><option value="created">Created</option><option value="title">Title</option></select><button className="dn-collection-add" onClick={createCollection} title="Add collection">＋</button></div>}
       {showAllNotes && availableTags.length > 0 && <div className="dn-tag-browser"><strong>Tags</strong>{availableTags.map((tag) => <button key={tag} onClick={() => setQuery((value) => `${value} tag:"${tag}"`.trim())}>{tag}</button>)}</div>}
       {showAllNotes && bulkSelection.length > 0 && <div className="dn-bulk-actions"><strong>{bulkSelection.length} selected</strong><button onClick={() => setBulkTagEditing(true)}>Add tags</button><button onClick={() => bulkUpdate((note) => ({ ...note, archived: true }))}>Archive</button><button onClick={() => setBulkSelection([])}>Clear</button></div>}
       {bulkTagEditing && <form className="dn-new-collection" onSubmit={(event) => { event.preventDefault(); applyBulkTags() }}><input autoFocus aria-label="Tags to add" placeholder="Tags, separated by commas" value={bulkTagDraft} onChange={(event) => setBulkTagDraft(event.target.value)} /><button type="submit">Apply</button><button type="button" onClick={() => { setBulkTagEditing(false); setBulkTagDraft('') }}>Cancel</button></form>}
-      {addingCollection && <form className="dn-new-collection" onSubmit={(event) => { event.preventDefault(); saveCollection() }}><input autoFocus aria-label="Collection name" placeholder="Collection name" value={collectionDraft} onChange={(event) => setCollectionDraft(event.target.value)} /><button type="submit">Create</button><button type="button" onClick={() => { setAddingCollection(false); setCollectionDraft('') }}>Cancel</button></form>}
+      {addingCollection && <form className="dn-new-collection" onSubmit={(event) => { event.preventDefault(); saveCollection() }}><input autoFocus aria-label="Collection name" placeholder="Collection name..." value={collectionDraft} onChange={(event) => setCollectionDraft(event.target.value)} /><button type="submit">Create</button><button type="button" onClick={() => { setAddingCollection(false); setCollectionDraft('') }}>Cancel</button></form>}
       <label className="dn-search"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.8" cy="8.8" r="5.8" /><path d="m13.2 13.2 4 4" /></svg><input ref={searchRef} value={query} onChange={(event) => { setQuery(event.target.value); setLibraryOpen(true); setShowAllNotes(true) }} placeholder="Search notes" /><kbd>{isMac ? '⌘' : 'Ctrl'} K</kbd></label>
-      {importError && <div className="dn-import-status" role="status">{importError}<button aria-label="Dismiss message" onClick={() => setImportError('')}>×</button></div>}
+      {statusMessage && <div className="dn-import-status" role="status">{statusMessage}<button aria-label="Dismiss message" onClick={() => setStatusMessage('')}>×</button></div>}
       {!ready ? <div className="dn-empty">Loading your notes…</div> : showTrash ? <div className="dn-trash-list">{trash.length ? trash.map((entry) => <div className="dn-trash-row" key={entry.note.id}><span><strong>{entry.note.title || 'Untitled note'}</strong><small>{safeHostname(entry.url)}</small></span><button className="dn-preview-toggle" onClick={() => restoreFromTrash(entry)}>Restore</button><button className="dn-delete" onClick={() => { const next = trash.filter((item) => item.note.id !== entry.note.id); setTrash(next); void writeTrash(next) }}>Delete forever</button></div>) : <div className="dn-empty">Trash is empty.</div>}</div> : !showAllNotes && notes.length === 0 && !query.trim() ? <div className="dn-empty-state"><div className="dn-empty-icon">✎</div><strong>A fresh page to think on.</strong><p>Keep the useful bits, questions, and ideas you find here.</p><button onClick={() => createNote()}>Write your first note <span>→</span></button><div className="dn-hint">Select any text on the page to highlight or attach a note.</div></div> : filteredNotes.length === 0 ? <div className="dn-empty">{query.trim() ? `No notes match “${query}”.` : 'No notes here yet.'}</div> : <div className="dn-content">
         <div className="dn-note-list">{filteredNotes.map(({ note, url }) => {
           const noteTitle = note.title.trim() || note.body.trim().split('\n')[0]?.trim().slice(0, 50) || 'Untitled note'
