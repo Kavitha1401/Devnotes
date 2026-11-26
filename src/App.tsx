@@ -386,6 +386,23 @@ function wrapTextOffsets(nodes: Text[], start: number, end: number, id: string, 
     const from = Math.max(0, start - offset)
     const to = Math.min(text.length, end - offset)
     if (to > from) {
+      // Prevent wrapping inside an existing mark
+      const existingMark = node.parentElement?.closest<HTMLElement>('mark[data-devnotes-highlight]')
+      if (existingMark) {
+        if (existingMark.dataset.devnotesHighlight === id) {
+          existingMark.style.cssText = `${highlightStyle(shape, color, isDarkPageSurface(existingMark.parentElement))} color:inherit;`
+          offset += text.length
+          if (offset >= end) break
+          continue
+        }
+        const p = existingMark.parentNode
+        if (p) {
+          while (existingMark.firstChild) p.insertBefore(existingMark.firstChild, existingMark)
+          existingMark.remove()
+          p.normalize()
+        }
+      }
+
       try {
         let targetNode = node
         if (from > 0) {
@@ -438,16 +455,21 @@ function highlightElements(id?: string): HTMLElement[] {
 }
 
 function clearPageHighlights() {
-  const marks = highlightElements()
-  const parents = new Set<Node>()
-  marks.forEach((mark) => {
+  while (true) {
+    const marks = highlightElements()
+    if (!marks.length) break
+    const mark = marks[0]
     const parent = mark.parentNode
-    if (parent) parents.add(parent)
-    mark.replaceWith(...Array.from(mark.childNodes))
-  })
-  parents.forEach((parent) => {
-    parent.normalize()
-  })
+    if (parent) {
+      while (mark.firstChild) {
+        parent.insertBefore(mark.firstChild, mark)
+      }
+      mark.remove()
+      parent.normalize()
+    } else {
+      mark.remove()
+    }
+  }
 }
 
 function getRangeFromPoint(x: number, y: number): Range | null {
@@ -1432,55 +1454,26 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
 
   const captureSelection = useCallback((action: 'highlight' | 'note' = 'note', color = settings.highlightColor, shape?: Highlight['shape']): boolean => {
     const selection = window.getSelection()
-
-    // Clean up any overlapping highlights in the selected range BEFORE reading text nodes
-    const overlappingMarks = new Set<string>()
-    highlightElements().forEach((m) => {
-      try {
-        if (selection && selection.rangeCount > 0 && selection.getRangeAt(0)?.intersectsNode(m) && m.dataset.devnotesHighlight) {
-          overlappingMarks.add(m.dataset.devnotesHighlight)
-        }
-      } catch {
-        // ignore
-      }
-    })
-    let inheritedNoteId: string | undefined
-    if (overlappingMarks.size > 0) {
-      overlappingMarks.forEach((id) => {
-        const found = highlights.find((h) => h.id === id)
-        if (found?.noteId && !inheritedNoteId) {
-          inheritedNoteId = found.noteId
-        }
-        highlightElements(id).forEach((mark) => {
-          const parent = mark.parentNode
-          if (parent) {
-            while (mark.firstChild) parent.insertBefore(mark.firstChild, mark)
-            mark.remove()
-            parent.normalize()
-          }
-        })
-      })
-    }
-
     let text = ''
     let prefix = ''
     let suffix = ''
     let start = 0
     let end = 0
-    const nodes = pageTextNodes()
-    const pageText = nodes.map((node) => node.textContent ?? '').join('')
 
+    // Step 1: Read selection text and character offsets FIRST while selection range is completely intact
     if (selection && !selection.isCollapsed && selection.rangeCount > 0 && selection.toString().trim()) {
       const range = selection.getRangeAt(0)
-      start = pageTextOffset(nodes, range.startContainer, range.startOffset)
-      end = pageTextOffset(nodes, range.endContainer, range.endOffset)
-      const selectedText = pageText.slice(start, end)
+      const currentNodes = pageTextNodes()
+      const currentPageText = currentNodes.map((node) => node.textContent ?? '').join('')
+      start = pageTextOffset(currentNodes, range.startContainer, range.startOffset)
+      end = pageTextOffset(currentNodes, range.endContainer, range.endOffset)
+      const selectedText = currentPageText.slice(start, end)
       text = selectedText.trim()
       if (text) {
         start += selectedText.length - selectedText.trimStart().length
         end = start + text.length
-        prefix = pageText.slice(Math.max(0, start - 80), start)
-        suffix = pageText.slice(end, Math.min(pageText.length, end + 80))
+        prefix = currentPageText.slice(Math.max(0, start - 80), start)
+        suffix = currentPageText.slice(end, Math.min(currentPageText.length, end + 80))
       }
     }
 
@@ -1499,6 +1492,44 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       if (action !== 'highlight') createNote()
       return false
     }
+
+    // Step 2: Now that start/end are safely captured, unwrap any conflicting/overlapping highlights
+    const overlappingMarks = new Set<string>()
+    highlightElements().forEach((m) => {
+      try {
+        if (selection && selection.rangeCount > 0 && selection.getRangeAt(0)?.intersectsNode(m) && m.dataset.devnotesHighlight) {
+          overlappingMarks.add(m.dataset.devnotesHighlight)
+        }
+      } catch {
+        // ignore
+      }
+    })
+    for (const h of highlights) {
+      if (h.text && (h.text === text || text.includes(h.text) || h.text.includes(text))) {
+        overlappingMarks.add(h.id)
+      }
+    }
+
+    let inheritedNoteId: string | undefined
+    if (overlappingMarks.size > 0) {
+      overlappingMarks.forEach((id) => {
+        const found = highlights.find((h) => h.id === id)
+        if (found?.noteId && !inheritedNoteId) {
+          inheritedNoteId = found.noteId
+        }
+        highlightElements(id).forEach((mark) => {
+          const parent = mark.parentNode
+          if (parent) {
+            while (mark.firstChild) parent.insertBefore(mark.firstChild, mark)
+            mark.remove()
+            parent.normalize()
+          }
+        })
+      })
+    }
+
+    // Step 3: Get clean text nodes and wrap the new mark
+    const nodes = pageTextNodes()
 
     const item: Highlight = {
       id: crypto.randomUUID(),
@@ -1897,7 +1928,125 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       {(runtimeInvalid || saveState === 'error') && <div className="dn-recovery-banner" role="alert"><span>{runtimeInvalid ? 'DevNotes was updated, reload this tab.' : 'DevNotes could not save. Your text is still in memory.'}</span><button onClick={() => void copyUnsavedText()}>Copy notes</button></div>}
       {incognitoMode && <div className="dn-privacy-banner" role="status">Incognito mode: notes stay in memory for this tab.</div>}
 
-      {settingsOpen && <section className="dn-settings" role="dialog" aria-label="DevNotes settings"><div className="dn-settings-heading"><div><strong>Settings</strong><span>Preferences are stored on this device.</span></div><button className="dn-icon-button" onClick={() => setSettingsOpen(false)} aria-label="Close settings">×</button></div><div className="dn-settings-content"><label>Theme<select value={settings.theme} onChange={(event) => updateSettings({ theme: event.target.value as DevNotesSettings['theme'] })}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option><option value="sepia">Sepia</option></select></label><label>Selection toolbar<select value={settings.toolbarBehavior} onChange={(event) => updateSettings({ toolbarBehavior: event.target.value as DevNotesSettings["toolbarBehavior"] })}><option value="always">Always</option><option value="hold-alt">Hold Alt</option><option value="never">Never</option></select></label><label>Text size<select value={settings.textSize} onChange={(event) => updateSettings({ textSize: event.target.value as DevNotesSettings["textSize"] })}><option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option></select></label><label>Panel side<select value={settings.panelSide} onChange={(event) => updateSettings({ panelSide: event.target.value as DevNotesSettings['panelSide'] })}><option value="right">Right</option><option value="left">Left</option></select></label><label>Panel width <span>{settings.panelWidth}px</span><input type="range" min="360" max="720" step="10" value={settings.panelWidth} onChange={(event) => updateSettings({ panelWidth: Number(event.target.value) })} /></label><label>Launcher position<select value={settings.launcherPosition} onChange={(event) => updateSettings({ launcherPosition: event.target.value as DevNotesSettings['launcherPosition'] })}><option value="bottom-right">Bottom right</option><option value="bottom-left">Bottom left</option></select></label><label className="dn-settings-check"><input type="checkbox" checked={settings.hideLauncher} onChange={(event) => updateSettings({ hideLauncher: event.target.checked })} />Hide the floating launcher</label><fieldset><legend>Default highlight color</legend><div className="dn-setting-colors">{HIGHLIGHT_COLORS.map((color) => <button key={color} type="button" className={settings.highlightColor === color ? 'selected' : ''} style={{ background: color }} aria-label={`Use highlight color ${color}`} onClick={() => updateSettings({ highlightColor: color })} />)}</div></fieldset><label>Trash retention <span>{settings.trashRetentionDays} days</span><input type="range" min="30" max="3650" step="30" value={settings.trashRetentionDays} onChange={(event) => updateSettings({ trashRetentionDays: Number(event.target.value) })} /></label><label>Version history <span>{settings.historyDepth} versions</span><input type="range" min="1" max="100" value={settings.historyDepth} onChange={(event) => updateSettings({ historyDepth: Number(event.target.value) })} /></label><div className="dn-site-settings"><strong>This site · {hostname}</strong><button onClick={() => void disableOnThisSite()}>Disable DevNotes on this site</button></div><form className="dn-blocklist-add" onSubmit={(event) => { event.preventDefault(); addBlockedHost(blocklistDraft); setBlocklistDraft('') }}><label htmlFor="dn-block-host">Block another site</label><div><input id="dn-block-host" value={blocklistDraft} onChange={(event) => setBlocklistDraft(event.target.value)} placeholder="example.com" /><button type="submit">Add</button></div></form><div className="dn-blocklist"><strong>Blocked sites</strong>{settings.disabledHosts.length ? settings.disabledHosts.map((host) => <div key={host}><span>{host}</span><button aria-label={`Unblock ${host}`} onClick={() => allowHost(host)}>Allow</button></div>) : <small>No custom sites blocked.</small>}<strong>Default protected sites</strong>{DEFAULT_BLOCKED_HOSTS.map((host) => { const allowed = settings.enabledHosts.some((rule) => hostMatches(hostname, rule)) && hostMatches(hostname, host); return <div key={host}><span>{host}</span><button aria-label={`${allowed ? 'Block' : 'Allow'} DevNotes on ${host}`} onClick={() => allowed ? addBlockedHost(host) : allowHost(host)}>{allowed ? 'Block' : 'Allow'}</button></div> })}</div></div></section>}
+      {settingsOpen && (
+        <section className="dn-settings" role="dialog" aria-label="DevNotes settings">
+          <div className="dn-settings-heading">
+            <div>
+              <strong>Settings</strong>
+              <span>Preferences are stored on this device.</span>
+            </div>
+            <button className="dn-icon-button" onClick={() => setSettingsOpen(false)} aria-label="Close settings">×</button>
+          </div>
+          <div className="dn-settings-content">
+            <label>
+              Theme
+              <select value={settings.theme} onChange={(event) => updateSettings({ theme: event.target.value as DevNotesSettings['theme'] })}>
+                <option value="system">System</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+                <option value="sepia">Sepia</option>
+              </select>
+            </label>
+            <label>
+              Selection toolbar
+              <select value={settings.toolbarBehavior} onChange={(event) => updateSettings({ toolbarBehavior: event.target.value as DevNotesSettings["toolbarBehavior"] })}>
+                <option value="always">Always</option>
+                <option value="hold-alt">Hold Alt</option>
+                <option value="never">Never</option>
+              </select>
+            </label>
+            <label>
+              Text size
+              <select value={settings.textSize} onChange={(event) => updateSettings({ textSize: event.target.value as DevNotesSettings["textSize"] })}>
+                <option value="small">Small</option>
+                <option value="medium">Medium</option>
+                <option value="large">Large</option>
+              </select>
+            </label>
+            <label>
+              Panel side
+              <select value={settings.panelSide} onChange={(event) => updateSettings({ panelSide: event.target.value as DevNotesSettings['panelSide'] })}>
+                <option value="right">Right</option>
+                <option value="left">Left</option>
+              </select>
+            </label>
+            <label>
+              Panel width <span>{settings.panelWidth}px</span>
+              <input type="range" min="360" max="720" step="10" value={settings.panelWidth} onChange={(event) => updateSettings({ panelWidth: Number(event.target.value) })} />
+            </label>
+            <label>
+              Launcher position
+              <select value={settings.launcherPosition} onChange={(event) => updateSettings({ launcherPosition: event.target.value as DevNotesSettings['launcherPosition'] })}>
+                <option value="bottom-right">Bottom right</option>
+                <option value="bottom-left">Bottom left</option>
+              </select>
+            </label>
+            <label className="dn-settings-check">
+              <input type="checkbox" checked={settings.hideLauncher} onChange={(event) => updateSettings({ hideLauncher: event.target.checked })} />
+              <span>Hide the floating launcher</span>
+            </label>
+            <div className="dn-settings-row">
+              <span>Default highlight color</span>
+              <div className="dn-setting-colors">
+                {HIGHLIGHT_COLORS.map((color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    className={settings.highlightColor === color ? 'selected' : ''}
+                    style={{ background: color }}
+                    aria-label={`Use highlight color ${color}`}
+                    onClick={() => updateSettings({ highlightColor: color })}
+                  />
+                ))}
+              </div>
+            </div>
+            <label>
+              Trash retention <span>{settings.trashRetentionDays} days</span>
+              <input type="range" min="30" max="3650" step="30" value={settings.trashRetentionDays} onChange={(event) => updateSettings({ trashRetentionDays: Number(event.target.value) })} />
+            </label>
+            <label>
+              Version history <span>{settings.historyDepth} versions</span>
+              <input type="range" min="1" max="100" value={settings.historyDepth} onChange={(event) => updateSettings({ historyDepth: Number(event.target.value) })} />
+            </label>
+            <div className="dn-site-settings">
+              <strong>This site · {hostname}</strong>
+              <button onClick={() => void disableOnThisSite()}>Disable DevNotes on this site</button>
+            </div>
+            <form className="dn-blocklist-add" onSubmit={(event) => { event.preventDefault(); addBlockedHost(blocklistDraft); setBlocklistDraft('') }}>
+              <label htmlFor="dn-block-host">Block another site</label>
+              <div>
+                <input id="dn-block-host" value={blocklistDraft} onChange={(event) => setBlocklistDraft(event.target.value)} placeholder="example.com" />
+                <button type="submit">Add</button>
+              </div>
+            </form>
+            <div className="dn-blocklist">
+              <strong className="dn-blocklist-section-title">Blocked sites</strong>
+              {settings.disabledHosts.length ? (
+                settings.disabledHosts.map((host) => (
+                  <div key={host} className="dn-blocklist-item">
+                    <span>{host}</span>
+                    <button aria-label={`Unblock ${host}`} onClick={() => allowHost(host)}>Allow</button>
+                  </div>
+                ))
+              ) : (
+                <small className="dn-blocklist-empty">No custom sites blocked.</small>
+              )}
+              <strong className="dn-blocklist-section-title">Default protected sites</strong>
+              {DEFAULT_BLOCKED_HOSTS.map((host) => {
+                const allowed = settings.enabledHosts.some((rule) => hostMatches(hostname, rule)) && hostMatches(hostname, host)
+                return (
+                  <div key={host} className="dn-blocklist-item">
+                    <span>{host}</span>
+                    <button aria-label={`${allowed ? 'Block' : 'Allow'} DevNotes on ${host}`} onClick={() => allowed ? addBlockedHost(host) : allowHost(host)}>
+                      {allowed ? 'Block' : 'Allow'}
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </section>
+      )}
 
       <div className="dn-page">
         <div className="dn-site-icon">{hostname[0]?.toUpperCase()}</div>

@@ -46,6 +46,7 @@
   --dn-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --dn-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   --dn-font-serif: Georgia, Cambria, "Times New Roman", Times, serif;
+  --dn-font-journal: "Charter", "Bitstream Charter", "Sitka Text", "Cambria", "Iowan Old Style", "Georgia", serif;
 }
 
 *, *::before, *::after {
@@ -781,7 +782,8 @@ button {
   outline: 0;
   background: transparent;
   color: var(--dn-text);
-  font-size: 15px;
+  font-family: var(--dn-font-journal);
+  font-size: 16px;
   font-weight: 600;
   padding: 2px 0;
 }
@@ -797,8 +799,9 @@ button {
   outline: 0;
   background: transparent;
   color: var(--dn-text);
-  font-size: 13px;
-  line-height: 1.6;
+  font-family: var(--dn-font-journal);
+  font-size: 14px;
+  line-height: 1.65;
 }
 
 .dn-body::placeholder {
@@ -987,26 +990,12 @@ button {
   flex-shrink: 0;
 }
 
-.dn-card-drag-hint {
-  font-size: 10px;
-  color: var(--dn-muted);
+.dn-card-header-right {
   display: flex;
+  flex-direction: row;
   align-items: center;
-  gap: 2px;
-}
-
-.dn-card-font-btn {
-  border: 1px solid var(--dn-border);
-  border-radius: 4px;
-  padding: 1px 4px;
-  font-size: 10px;
-  background: var(--dn-surface);
-  color: var(--dn-muted);
-  cursor: pointer;
-}
-
-.dn-card-font-btn:hover {
-  color: var(--dn-text);
+  gap: 4px;
+  flex-shrink: 0;
 }
 
 .dn-card-open-btn {
@@ -1058,7 +1047,9 @@ button {
   resize: none;
   background: transparent;
   color: var(--dn-text);
-  font: inherit;
+  font-family: var(--dn-font-journal);
+  font-size: 13.5px;
+  line-height: 1.6;
 }
 
 .dn-card-input::placeholder {
@@ -1068,6 +1059,9 @@ button {
 .dn-card-read {
   cursor: text;
   word-break: break-word;
+  font-family: var(--dn-font-journal);
+  font-size: 13.5px;
+  line-height: 1.6;
 }
 
 .dn-card-read p {
@@ -1096,34 +1090,10 @@ button {
   text-decoration: line-through;
 }
 
-/* Scoped note fonts: ONLY applies to note body/title and card text, NEVER system UI or settings */
-.dn-card.dn-font-serif .dn-card-input,
-.dn-card.dn-font-serif .dn-card-read,
-.dn-card.dn-font-serif .dn-card-title,
-.dn-editor.dn-font-serif .dn-title,
-.dn-editor.dn-font-serif .dn-body {
-  font-family: var(--dn-font-serif);
-}
-
-.dn-card.dn-font-mono .dn-card-input,
-.dn-card.dn-font-mono .dn-card-read,
-.dn-card.dn-font-mono .dn-card-title,
-.dn-editor.dn-font-mono .dn-title,
-.dn-editor.dn-font-mono .dn-body {
-  font-family: var(--dn-font-mono);
-}
-
-.dn-card.dn-font-sans .dn-card-input,
-.dn-card.dn-font-sans .dn-card-read,
-.dn-card.dn-font-sans .dn-card-title,
-.dn-editor.dn-font-sans .dn-title,
-.dn-editor.dn-font-sans .dn-body {
-  font-family: var(--dn-font);
-}
-
 .dn-card-title {
+  font-family: var(--dn-font-journal);
   font-weight: 600;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.35;
   color: var(--dn-text);
   margin-bottom: 6px;
@@ -1207,8 +1177,8 @@ button {
   outline: 0;
   background: transparent;
   color: var(--dn-text);
-  font-size: 13px;
-  font-family: inherit;
+  font-family: var(--dn-font-journal);
+  font-size: 13.5px;
   padding: 0;
 }
 
@@ -1485,6 +1455,7 @@ button {
   background: transparent;
   color: var(--dn-muted);
   font-size: 12px;
+  white-space: nowrap;
   cursor: pointer;
   transition: all 0.15s ease;
 }
@@ -1527,6 +1498,7 @@ button {
   flex-direction: column;
   background: var(--dn-surface);
   color: var(--dn-text);
+  font-family: var(--dn-font);
 }
 
 .dn-settings-heading {
@@ -1540,16 +1512,18 @@ button {
 .dn-settings-heading > div {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
 .dn-settings-heading strong {
+  display: block;
   font-size: 15px;
   font-weight: 600;
   color: var(--dn-text);
 }
 
 .dn-settings-heading span {
+  display: block;
   font-size: 12px;
   color: var(--dn-muted);
 }
@@ -1559,20 +1533,26 @@ button {
   padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
 }
 
 .dn-settings-content > label {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  font-size: 13px;
+  color: var(--dn-text);
+}
+
+.dn-settings-content label span {
+  color: var(--dn-muted);
   font-size: 12px;
 }
 
 .dn-settings-content select, .dn-settings-content input[type="text"] {
   border: 1px solid var(--dn-border);
   border-radius: 6px;
-  padding: 4px 8px;
+  padding: 5px 10px;
   background: var(--dn-bg);
   color: var(--dn-text);
   font-size: 12px;
@@ -1585,26 +1565,42 @@ button {
 .dn-settings-check {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   cursor: pointer;
+  font-size: 13px;
+  color: var(--dn-text);
 }
 
 .dn-settings-check input {
   accent-color: var(--dn-accent);
 }
 
+.dn-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--dn-text);
+}
+
 .dn-setting-colors {
   display: flex;
-  gap: 6px;
-  padding: 4px 0;
+  gap: 8px;
+  padding: 2px 0;
 }
 
 .dn-setting-colors button {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border: 2px solid var(--dn-surface);
   border-radius: 50%;
   box-shadow: 0 0 0 1px var(--dn-border);
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+.dn-setting-colors button:hover {
+  transform: scale(1.1);
 }
 
 .dn-setting-colors button.selected {
@@ -1615,39 +1611,68 @@ button {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding-top: 12px;
+  padding-top: 14px;
   border-top: 1px solid var(--dn-border);
   font-size: 12px;
 }
 
-.dn-site-settings strong, .dn-blocklist strong {
+.dn-site-settings strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dn-text);
+}
+
+.dn-blocklist-section-title {
   display: block;
   font-size: 12px;
   font-weight: 600;
   color: var(--dn-text);
-  margin-bottom: 2px;
+  margin-top: 6px;
 }
 
-.dn-blocklist > div {
+.dn-blocklist-empty {
+  display: block;
+  color: var(--dn-muted);
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+
+.dn-blocklist-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 0;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--dn-border);
 }
 
-.dn-blocklist > small {
-  display: block;
-  color: var(--dn-muted);
-  margin-bottom: 6px;
+.dn-blocklist-item:last-child {
+  border-bottom: 0;
+}
+
+.dn-blocklist-add > div {
+  display: flex;
+  gap: 6px;
+}
+
+.dn-blocklist-add input {
+  flex: 1;
 }
 
 .dn-site-settings button, .dn-blocklist button, .dn-blocklist-add button {
   border: 1px solid var(--dn-border);
   border-radius: 6px;
-  padding: 4px 8px;
+  padding: 5px 10px;
   background: var(--dn-surface);
   color: var(--dn-text);
   font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.dn-site-settings button:hover, .dn-blocklist button:hover, .dn-blocklist-add button:hover {
+  background: var(--dn-bg);
+  border-color: var(--dn-accent);
 }
 
 
