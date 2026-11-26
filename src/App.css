@@ -1074,18 +1074,53 @@ button {
 
 .dn-card-task {
   display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  margin: 0 0 4px;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 5px;
   cursor: pointer;
+  transition: opacity 0.15s ease;
 }
 
-.dn-card-task input {
-  margin-top: 3px;
-  accent-color: var(--dn-accent);
+.dn-card-task.is-done {
+  opacity: 0.65;
 }
 
-.dn-card-task .done {
+.dn-card-task-check {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1.5px solid var(--dn-border);
+  background: var(--dn-surface);
+  color: #ffffff;
+  padding: 0;
+  cursor: pointer;
+  flex: 0 0 16px;
+  transition: all 0.15s ease;
+}
+
+.dn-card-task-check:hover {
+  border-color: var(--dn-cat-todo);
+}
+
+.dn-card-task-check.is-checked {
+  background: var(--dn-cat-todo);
+  border-color: var(--dn-cat-todo);
+  color: #ffffff;
+}
+
+.dn-card-task-text {
+  flex: 1;
+  font-family: var(--dn-font-journal);
+  font-size: 13.5px;
+  line-height: 1.4;
+  color: var(--dn-text);
+  word-break: break-word;
+  user-select: none;
+}
+
+.dn-card-task-text.done {
   color: var(--dn-muted);
   text-decoration: line-through;
 }
@@ -1147,11 +1182,11 @@ button {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 6px;
+  padding: 4px 8px;
   border-radius: 6px;
   background: var(--dn-surface);
   border: 1px solid var(--dn-border);
-  transition: border-color 0.15s ease;
+  transition: all 0.15s ease;
 }
 
 .dn-todo-item:focus-within {
@@ -1159,20 +1194,56 @@ button {
 }
 
 .dn-todo-item.is-done {
-  opacity: 0.7;
+  opacity: 0.65;
+  background: var(--dn-bg);
 }
 
-.dn-todo-check {
-  width: 15px;
-  height: 15px;
-  accent-color: var(--dn-accent);
+.dn-todo-check-btn {
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  border-radius: 4px;
+  border: 1.5px solid var(--dn-border);
+  background: var(--dn-surface);
+  color: #ffffff;
+  padding: 0;
   cursor: pointer;
-  flex: 0 0 auto;
+  flex: 0 0 17px;
+  transition: all 0.15s ease;
+}
+
+.dn-todo-check-btn:hover {
+  border-color: var(--dn-cat-todo);
+}
+
+.dn-todo-check-btn.is-checked {
+  background: var(--dn-cat-todo);
+  border-color: var(--dn-cat-todo);
+  color: #ffffff;
+}
+
+.dn-todo-text-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.dn-todo-item.is-done .dn-todo-text-wrap::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1.5px;
+  background: var(--dn-muted);
+  pointer-events: none;
 }
 
 .dn-todo-text {
-  flex: 1;
-  min-width: 0;
+  width: 100%;
   border: 0;
   outline: 0;
   background: transparent;
@@ -1183,7 +1254,6 @@ button {
 }
 
 .dn-todo-item.is-done .dn-todo-text {
-  text-decoration: line-through;
   color: var(--dn-muted);
 }
 
@@ -1455,7 +1525,6 @@ button {
   background: transparent;
   color: var(--dn-muted);
   font-size: 12px;
-  white-space: nowrap;
   cursor: pointer;
   transition: all 0.15s ease;
 }
@@ -1498,7 +1567,6 @@ button {
   flex-direction: column;
   background: var(--dn-surface);
   color: var(--dn-text);
-  font-family: var(--dn-font);
 }
 
 .dn-settings-heading {
@@ -1512,18 +1580,16 @@ button {
 .dn-settings-heading > div {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
 }
 
 .dn-settings-heading strong {
-  display: block;
   font-size: 15px;
   font-weight: 600;
   color: var(--dn-text);
 }
 
 .dn-settings-heading span {
-  display: block;
   font-size: 12px;
   color: var(--dn-muted);
 }
@@ -1533,26 +1599,20 @@ button {
   padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
 }
 
 .dn-settings-content > label {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 13px;
-  color: var(--dn-text);
-}
-
-.dn-settings-content label span {
-  color: var(--dn-muted);
   font-size: 12px;
 }
 
 .dn-settings-content select, .dn-settings-content input[type="text"] {
   border: 1px solid var(--dn-border);
   border-radius: 6px;
-  padding: 5px 10px;
+  padding: 4px 8px;
   background: var(--dn-bg);
   color: var(--dn-text);
   font-size: 12px;
@@ -1565,42 +1625,26 @@ button {
 .dn-settings-check {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   cursor: pointer;
-  font-size: 13px;
-  color: var(--dn-text);
 }
 
 .dn-settings-check input {
   accent-color: var(--dn-accent);
 }
 
-.dn-settings-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 13px;
-  color: var(--dn-text);
-}
-
 .dn-setting-colors {
   display: flex;
-  gap: 8px;
-  padding: 2px 0;
+  gap: 6px;
+  padding: 4px 0;
 }
 
 .dn-setting-colors button {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   border: 2px solid var(--dn-surface);
   border-radius: 50%;
   box-shadow: 0 0 0 1px var(--dn-border);
-  cursor: pointer;
-  transition: transform 0.15s ease;
-}
-
-.dn-setting-colors button:hover {
-  transform: scale(1.1);
 }
 
 .dn-setting-colors button.selected {
@@ -1611,68 +1655,39 @@ button {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding-top: 14px;
+  padding-top: 12px;
   border-top: 1px solid var(--dn-border);
   font-size: 12px;
 }
 
-.dn-site-settings strong {
-  display: block;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--dn-text);
-}
-
-.dn-blocklist-section-title {
+.dn-site-settings strong, .dn-blocklist strong {
   display: block;
   font-size: 12px;
   font-weight: 600;
   color: var(--dn-text);
-  margin-top: 6px;
+  margin-bottom: 2px;
 }
 
-.dn-blocklist-empty {
-  display: block;
-  color: var(--dn-muted);
-  font-size: 11px;
-  margin-bottom: 4px;
-}
-
-.dn-blocklist-item {
+.dn-blocklist > div {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 5px 0;
-  border-bottom: 1px solid var(--dn-border);
+  padding: 4px 0;
 }
 
-.dn-blocklist-item:last-child {
-  border-bottom: 0;
-}
-
-.dn-blocklist-add > div {
-  display: flex;
-  gap: 6px;
-}
-
-.dn-blocklist-add input {
-  flex: 1;
+.dn-blocklist > small {
+  display: block;
+  color: var(--dn-muted);
+  margin-bottom: 6px;
 }
 
 .dn-site-settings button, .dn-blocklist button, .dn-blocklist-add button {
   border: 1px solid var(--dn-border);
   border-radius: 6px;
-  padding: 5px 10px;
+  padding: 4px 8px;
   background: var(--dn-surface);
   color: var(--dn-text);
   font-size: 11px;
-  cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
-}
-
-.dn-site-settings button:hover, .dn-blocklist button:hover, .dn-blocklist-add button:hover {
-  background: var(--dn-bg);
-  border-color: var(--dn-accent);
 }
 
 

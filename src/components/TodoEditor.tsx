@@ -42,11 +42,13 @@ export function TodoEditor({
     setNewTaskText('')
   }
 
+  const completedCount = tasks.filter((t) => t.done).length
+
   if (rawMode) {
     return (
       <div className="dn-todo-container">
         <div className="dn-todo-header">
-          <small>{tasks.filter((t) => t.done).length} of {tasks.length} done</small>
+          <small>{completedCount} of {tasks.length} completed</small>
           <button type="button" className="dn-todo-mode-btn" onClick={() => setRawMode(false)}>Checklist view</button>
         </div>
         <textarea
@@ -62,36 +64,44 @@ export function TodoEditor({
   return (
     <div className="dn-todo-container">
       <div className="dn-todo-header">
-        <small>{tasks.filter((t) => t.done).length} of {tasks.length} done</small>
+        <small>{completedCount} of {tasks.length} completed</small>
         <button type="button" className="dn-todo-mode-btn" onClick={() => setRawMode(true)}>Edit as text</button>
       </div>
       <div className="dn-todo-list">
         {tasks.map((task, i) => (
           <div key={i} className={`dn-todo-item ${task.done ? 'is-done' : ''}`}>
-            <input
-              type="checkbox"
-              className="dn-todo-check"
-              checked={task.done}
-              onChange={(e) => updateTask(i, e.target.checked, task.text)}
-              aria-label={`Mark "${task.text}" as ${task.done ? 'incomplete' : 'complete'}`}
-            />
-            <input
-              type="text"
-              className="dn-todo-text"
-              value={task.text}
-              placeholder="Task description..."
-              onChange={(e) => updateTask(i, task.done, e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault()
-                  const updated = [...tasks.slice(0, i + 1), { done: false, text: '' }, ...tasks.slice(i + 1)]
-                  onChange(updated.map((t) => `- [${t.done ? 'x' : ' '}] ${t.text}`).join('\n'))
-                } else if (e.key === 'Backspace' && !task.text) {
-                  e.preventDefault()
-                  deleteTask(i)
-                }
-              }}
-            />
+            <button
+              type="button"
+              className={`dn-todo-check-btn ${task.done ? 'is-checked' : ''}`}
+              onClick={() => updateTask(i, !task.done, task.text)}
+              aria-label={task.done ? `Mark "${task.text}" as incomplete` : `Mark "${task.text}" as complete`}
+              title={task.done ? 'Mark as incomplete' : 'Mark as complete'}
+            >
+              {task.done ? (
+                <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="3.5 8.5 6.5 11.5 12.5 4.5" />
+                </svg>
+              ) : null}
+            </button>
+            <div className="dn-todo-text-wrap">
+              <input
+                type="text"
+                className="dn-todo-text"
+                value={task.text}
+                placeholder="Task description..."
+                onChange={(e) => updateTask(i, task.done, e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    const updated = [...tasks.slice(0, i + 1), { done: false, text: '' }, ...tasks.slice(i + 1)]
+                    onChange(updated.map((t) => `- [${t.done ? 'x' : ' '}] ${t.text}`).join('\n'))
+                  } else if (e.key === 'Backspace' && !task.text) {
+                    e.preventDefault()
+                    deleteTask(i)
+                  }
+                }}
+              />
+            </div>
             <button
               type="button"
               className="dn-todo-delete-btn"

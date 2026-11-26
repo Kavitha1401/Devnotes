@@ -47,6 +47,23 @@ function CardBody({ body, category, editing, onChange, onEditingChange, onToggle
     if (editing) ref.current?.focus()
   }, [editing])
 
+  const handleToggleLine = (lineIndex: number, nextDone: boolean) => {
+    const lines = draft.split('\n')
+    if (lineIndex < 0 || lineIndex >= lines.length) return
+    const line = lines[lineIndex]
+    const match = line.match(CARD_TASK_LINE)
+    if (match) {
+      lines[lineIndex] = line.replace(/^(\s*[-*+]\s+\[)[ xX](\])/, `$1${nextDone ? 'x' : ' '}$2`)
+    } else {
+      const content = line.replace(/^\s*[-*+]\s+/, '')
+      lines[lineIndex] = `- [${nextDone ? 'x' : ' '}] ${content}`
+    }
+    const newBody = lines.join('\n')
+    setDraft(newBody)
+    onChange(newBody)
+    onToggleTask(lineIndex, nextDone)
+  }
+
   if (reading) {
     const lines = draft.split('\n')
     return <div className="dn-card-read" onClick={() => onEditingChange(true)}>
@@ -56,10 +73,24 @@ function CardBody({ body, category, editing, onChange, onEditingChange, onToggle
           const done = task ? task[1] !== ' ' : false
           const text = task ? task[2] : line.replace(/^\s*[-*+]\s+/, '')
           if (!text.trim() && lines.length > 1) return null
-          return <label key={index} className="dn-card-task" onClick={(event) => event.stopPropagation()}>
-            <input type="checkbox" checked={done} onChange={(event) => onToggleTask(index, event.target.checked)} />
-            <span className={done ? 'done' : ''}>{text || 'Empty task'}</span>
-          </label>
+          return <div key={index} className={`dn-card-task ${done ? 'is-done' : ''}`} onClick={(event) => event.stopPropagation()}>
+            <button
+              type="button"
+              className={`dn-card-task-check ${done ? 'is-checked' : ''}`}
+              title={done ? 'Mark as incomplete' : 'Mark as complete'}
+              aria-label={done ? 'Mark as incomplete' : 'Mark as complete'}
+              onClick={() => handleToggleLine(index, !done)}
+            >
+              {done ? (
+                <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="3.5 8.5 6.5 11.5 12.5 4.5" />
+                </svg>
+              ) : null}
+            </button>
+            <span className={`dn-card-task-text ${done ? 'done' : ''}`} onClick={() => handleToggleLine(index, !done)}>
+              {text || 'Empty task'}
+            </span>
+          </div>
         }
         return line.trim() ? <p key={index}>{renderInline(line)}</p> : null
       })}
