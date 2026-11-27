@@ -630,6 +630,9 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   const [bulkSelection, setBulkSelection] = useState<string[]>([])
   const [bulkTagEditing, setBulkTagEditing] = useState(false)
   const [bulkTagDraft, setBulkTagDraft] = useState('')
+  const [bulkCollectionEditing, setBulkCollectionEditing] = useState(false)
+  const [bulkCollectionTarget, setBulkCollectionTarget] = useState('')
+  const [bulkNewCollectionName, setBulkNewCollectionName] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [selectedPageUrl, setSelectedPageUrl] = useState(pageUrl)
   const [ready, setReady] = useState(false)
@@ -1232,6 +1235,30 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     setBulkTagEditing(false)
   }
 
+  const applyBulkCollection = () => {
+    let targetId = bulkCollectionTarget
+    if (targetId === '__new__' || (collections.length === 0 && bulkNewCollectionName.trim())) {
+      const name = bulkNewCollectionName.trim()
+      if (!name) return
+      const existing = collections.find((c) => c.name.toLowerCase() === name.toLowerCase())
+      if (existing) {
+        targetId = existing.id
+      } else {
+        targetId = crypto.randomUUID()
+        collectionsDirtyRef.current = true
+        setCollections((items) => [...items, { id: targetId, name, createdAt: Date.now() }])
+      }
+    }
+    if (!targetId || targetId === '__new__') return
+    bulkUpdate((note) => ({
+      ...note,
+      collectionIds: [...new Set([...(note.collectionIds ?? []), targetId])],
+    }))
+    setBulkCollectionEditing(false)
+    setBulkCollectionTarget('')
+    setBulkNewCollectionName('')
+  }
+
   const createCollection = () => {
     setAddingCollection(true)
   }
@@ -1761,6 +1788,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
 
   const exportPageWithNotesPdf = () => {
     document.getElementById('devnotes-print-container')?.remove()
+    document.querySelectorAll('.dn-print-inline-note').forEach((el) => el.remove())
 
     const container = document.createElement('div')
     container.id = 'devnotes-print-container'
@@ -1779,73 +1807,101 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       question: '#ec4899',
     }
 
-    const notesHtml = pageNotes.map((note) => {
-      const associatedHighlight = pageHighlights.find((h) => h.noteId === note.id || h.id === note.id)
+    const renderNoteCardHtml = (note: Note, associatedHighlight?: Highlight) => {
       const cleanBody = cleanNoteBody(note.body)
       const lines = cleanBody.split('\n').filter(Boolean)
       const categoryLabel = note.category === 'todo' ? 'To-do' : note.category === 'idea' ? 'Idea' : note.category === 'remember' ? 'Remember' : note.category === 'question' ? 'Question' : 'Note'
       const catColor = categoryColors[note.category || 'general'] || '#64748b'
       const highlightColor = associatedHighlight?.color || catColor
 
-      const quoteHtml = associatedHighlight?.text
-        ? `<div style="margin:6px 0 8px; padding:6px 12px; border-left:3px solid ${highlightColor}; background:${associatedHighlight.color ? associatedHighlight.color + '26' : '#f8fafc'}; font-style:italic; font-size:11px; color:#1e293b; -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important;">
-             <span style="display:block; font-size:9px; font-weight:600; font-style:normal; text-transform:uppercase; color:${catColor}; margin-bottom:2px;">Referenced text:</span>
-             “<mark style="background:${associatedHighlight.color || '#fef08a'}; color:#0f172a; padding:1px 4px; border-radius:2px; -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important;">${escapeHtml(associatedHighlight.text)}</mark>”
-           </div>`
-        : ''
-
       const bodyHtml = lines.map((line) => {
         const taskMatch = line.match(/^\s*[-*+]\s+\[([ xX])\]\s*(.*)$/)
         if (taskMatch || note.category === 'todo') {
           const done = taskMatch ? taskMatch[1] !== ' ' : false
           const text = taskMatch ? taskMatch[2] : line.replace(/^\s*[-*+]\s+/, '')
-          return `<div style="display:flex; align-items:center; gap:6px; margin:3px 0; font-size:12px; color:${done ? '#64748b; text-decoration:line-through;' : '#1e293b;'}">
+          return `<span style="display:flex; align-items:center; gap:6px; margin:3px 0; font-size:12px; color:${done ? '#64748b; text-decoration:line-through;' : '#1e293b;'}">
                     <span>${done ? '☑' : '☐'}</span>
                     <span>${escapeHtml(text)}</span>
-                  </div>`
+                  </span>`
         }
-        return `<p style="margin:0 0 4px; font-size:12px; line-height:1.5; color:#1e293b;">${escapeHtml(line)}</p>`
+        return `<span style="display:block; margin:0 0 4px; font-size:12px; line-height:1.5; color:#1e293b;">${escapeHtml(line)}</span>`
       }).join('')
 
       const tagsHtml = note.tags && note.tags.length > 0
-        ? `<div style="display:flex; gap:4px; margin-top:8px; flex-wrap:wrap;">
+        ? `<span style="display:flex; gap:4px; margin-top:6px; flex-wrap:wrap;">
              ${note.tags.map((t) => `<span style="font-size:9.5px; padding:1px 6px; border:1px solid #cbd5e1; border-radius:3px; background:#ffffff; color:#64748b; -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important;">#${escapeHtml(t)}</span>`).join('')}
-           </div>`
+           </span>`
         : ''
 
-      return `
-        <article style="border:1px solid #cbd5e1; border-left:4px solid ${highlightColor}; border-radius:6px; padding:12px 14px; margin-bottom:12px; background:#f8fafc; page-break-inside:avoid; break-inside:avoid; -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important;">
-          <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+      return {
+        catColor,
+        highlightColor,
+        categoryLabel,
+        html: `
+          <span style="display:flex; align-items:center; gap:8px; margin-bottom:5px;">
             <span style="font-size:9.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; padding:2px 7px; border-radius:3px; background:${catColor}; color:#ffffff; -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important;">${categoryLabel}</span>
-            ${note.title ? `<strong style="font-size:13px; color:#0f172a;">${escapeHtml(note.title)}</strong>` : ''}
-          </div>
-          ${quoteHtml}
+            ${note.title ? `<strong style="font-size:12.5px; color:#0f172a;">${escapeHtml(note.title)}</strong>` : ''}
+          </span>
           ${bodyHtml}
           ${tagsHtml}
-        </article>
+        `,
+      }
+    }
+
+    // Insert notes referenced right at their highlighted text in the document
+    const inlineElements: HTMLElement[] = []
+    const inlinePlacedNoteIds = new Set<string>()
+
+    for (const note of pageNotes) {
+      const associatedHighlight = pageHighlights.find((h) => h.noteId === note.id || h.id === note.id)
+      if (associatedHighlight) {
+        const marks = Array.from(document.querySelectorAll<HTMLElement>(`mark[data-devnotes-highlight="${associatedHighlight.id}"]`))
+        if (marks.length > 0) {
+          const anchorMark = marks[marks.length - 1]
+          const { highlightColor, html } = renderNoteCardHtml(note, associatedHighlight)
+
+          const inlineNote = document.createElement('span')
+          inlineNote.className = 'dn-print-inline-note'
+          inlineNote.style.cssText = `display:block; margin:8px 0 12px; padding:10px 14px; border:1px solid #cbd5e1; border-left:4px solid ${highlightColor}; border-radius:6px; background:#f8fafc; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size:12px; line-height:1.5; color:#0f172a; page-break-inside:avoid; break-inside:avoid; -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; clear:both; text-align:left; font-weight:normal;`
+          inlineNote.innerHTML = html
+
+          anchorMark.insertAdjacentElement('afterend', inlineNote)
+          inlineElements.push(inlineNote)
+          inlinePlacedNoteIds.add(note.id)
+        }
+      }
+    }
+
+    // Any general notes not attached to a specific highlighted text
+    const unattachedNotes = pageNotes.filter((n) => !inlinePlacedNoteIds.has(n.id))
+    if (unattachedNotes.length > 0) {
+      const unattachedHtml = unattachedNotes.map((note) => {
+        const { highlightColor, html } = renderNoteCardHtml(note)
+        return `
+          <article style="border:1px solid #cbd5e1; border-left:4px solid ${highlightColor}; border-radius:6px; padding:12px 14px; margin-bottom:12px; background:#f8fafc; page-break-inside:avoid; break-inside:avoid; -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important;">
+            ${html}
+          </article>
+        `
+      }).join('')
+
+      const dateStr = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+
+      container.innerHTML = `
+        <div style="break-before:page; page-break-before:always; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color:#0f172a; padding:32px 16px; max-width:800px; margin:0 auto; -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important;">
+          <header style="border-bottom:2px solid #0f172a; padding-bottom:12px; margin-bottom:20px;">
+            <h2 style="font-size:18px; font-weight:700; margin:0 0 6px; color:#0f172a;">DevNotes · Page Notes</h2>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px 16px; font-size:11px; color:#475569;">
+              <div><strong>Page:</strong> ${escapeHtml(document.title || hostname)}</div>
+              <div><strong>URL:</strong> ${escapeHtml(pageUrl)}</div>
+              <div><strong>Exported:</strong> ${dateStr}</div>
+              <div><strong>General notes:</strong> ${unattachedNotes.length}</div>
+            </div>
+          </header>
+          <section>
+            ${unattachedHtml}
+          </section>
+        </div>
       `
-    }).join('')
-
-    const dateStr = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-
-    container.innerHTML = `
-      <div style="break-before:page; page-break-before:always; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color:#0f172a; padding:32px 16px; max-width:800px; margin:0 auto; -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important;">
-        <header style="border-bottom:2px solid #0f172a; padding-bottom:12px; margin-bottom:20px;">
-          <h2 style="font-size:18px; font-weight:700; margin:0 0 6px; color:#0f172a;">DevNotes · Notes & Highlights Summary</h2>
-          <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px 16px; font-size:11px; color:#475569;">
-            <div><strong>Page:</strong> ${escapeHtml(document.title || hostname)}</div>
-            <div><strong>URL:</strong> ${escapeHtml(pageUrl)}</div>
-            <div><strong>Exported:</strong> ${dateStr}</div>
-            <div><strong>Notes on page:</strong> ${pageNotes.length}</div>
-          </div>
-        </header>
-        <section>
-          ${pageNotes.length ? notesHtml : '<p style="color:#64748b; font-size:12px;">No notes recorded for this page.</p>'}
-        </section>
-      </div>
-    `
-
-    if (pageNotes.length > 0) {
       document.body.appendChild(container)
     }
 
@@ -1889,6 +1945,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     }
     style.textContent = `
       @media screen {
+        .dn-print-inline-note { display: none !important; }
         #devnotes-print-container { display: none !important; }
       }
       @media print {
@@ -1896,9 +1953,17 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
           display: none !important;
         }
 
+        .dn-print-inline-note,
+        .dn-print-inline-note *,
         *, *::before, *::after {
           -webkit-print-color-adjust: exact !important;
           print-color-adjust: exact !important;
+        }
+
+        .dn-print-inline-note {
+          display: block !important;
+          page-break-inside: avoid !important;
+          break-inside: avoid !important;
         }
 
         html, body {
@@ -1994,6 +2059,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     `
 
     const cleanup = () => {
+      inlineElements.forEach((el) => el.remove())
       container.remove()
       contentEl?.classList.remove('dn-print-main-content')
       modifiedParents.forEach(({ el, prevOverflow, prevHeight, prevDisplay }) => {
@@ -2408,13 +2474,67 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
             <strong>{bulkSelection.length}</strong> selected
           </span>
           <div className="dn-bulk-buttons">
-            <button type="button" className="dn-bulk-btn" onClick={() => setBulkTagEditing(true)}>Add tags</button>
+            <button type="button" className="dn-bulk-btn" onClick={() => { setBulkTagEditing(true); setBulkCollectionEditing(false) }}>Add tags</button>
+            <button type="button" className="dn-bulk-btn" onClick={() => { setBulkCollectionEditing(true); setBulkTagEditing(false) }}>Add to collection</button>
             <button type="button" className="dn-bulk-btn" onClick={() => bulkUpdate((note) => ({ ...note, archived: true }))}>Archive</button>
-            <button type="button" className="dn-bulk-btn dn-bulk-btn-clear" onClick={() => setBulkSelection([])}>Clear</button>
+            <button type="button" className="dn-bulk-btn dn-bulk-btn-clear" onClick={() => { setBulkSelection([]); setBulkTagEditing(false); setBulkCollectionEditing(false) }}>Clear</button>
           </div>
         </div>
       )}
-      {bulkTagEditing && <form className="dn-new-collection" onSubmit={(event) => { event.preventDefault(); applyBulkTags() }}><input autoFocus aria-label="Tags to add" placeholder="Tags, separated by commas" value={bulkTagDraft} onChange={(event) => setBulkTagDraft(event.target.value)} /><button type="submit">Apply</button><button type="button" onClick={() => { setBulkTagEditing(false); setBulkTagDraft('') }}>Cancel</button></form>}
+      {bulkTagEditing && (
+        <form className="dn-new-collection" onSubmit={(event) => { event.preventDefault(); applyBulkTags() }}>
+          <input autoFocus aria-label="Tags to add" placeholder="Tags, separated by commas" value={bulkTagDraft} onChange={(event) => setBulkTagDraft(event.target.value)} />
+          <button type="submit">Apply</button>
+          <button type="button" onClick={() => { setBulkTagEditing(false); setBulkTagDraft('') }}>Cancel</button>
+        </form>
+      )}
+      {bulkCollectionEditing && (
+        <form className="dn-new-collection" onSubmit={(event) => { event.preventDefault(); applyBulkCollection() }}>
+          {collections.length > 0 && (
+            <select
+              autoFocus
+              aria-label="Select collection"
+              value={bulkCollectionTarget}
+              onChange={(event) => setBulkCollectionTarget(event.target.value)}
+            >
+              <option value="">Select collection...</option>
+              {collections.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+              <option value="__new__">+ New collection...</option>
+            </select>
+          )}
+          {(collections.length === 0 || bulkCollectionTarget === '__new__') && (
+            <input
+              autoFocus={collections.length === 0}
+              aria-label="Collection name"
+              placeholder="Collection name..."
+              value={bulkNewCollectionName}
+              onChange={(event) => setBulkNewCollectionName(event.target.value)}
+            />
+          )}
+          <button
+            type="submit"
+            disabled={
+              collections.length > 0 && bulkCollectionTarget !== '__new__'
+                ? !bulkCollectionTarget
+                : !bulkNewCollectionName.trim()
+            }
+          >
+            Add
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setBulkCollectionEditing(false)
+              setBulkCollectionTarget('')
+              setBulkNewCollectionName('')
+            }}
+          >
+            Cancel
+          </button>
+        </form>
+      )}
       {addingCollection && <form className="dn-new-collection" onSubmit={(event) => { event.preventDefault(); saveCollection() }}><input autoFocus aria-label="Collection name" placeholder="Collection name..." value={collectionDraft} onChange={(event) => setCollectionDraft(event.target.value)} /><button type="submit">Create</button><button type="button" onClick={() => { setAddingCollection(false); setCollectionDraft('') }}>Cancel</button></form>}
       <label className="dn-search"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.8" cy="8.8" r="5.8" /><path d="m13.2 13.2 4 4" /></svg><input ref={searchRef} value={query} onChange={(event) => { setQuery(event.target.value); setLibraryOpen(true); setShowAllNotes(true) }} placeholder="Search notes" /><kbd>{isMac ? '⌘' : 'Ctrl'} K</kbd></label>
       {statusMessage && <div className="dn-import-status" role="status">{statusMessage}<button aria-label="Dismiss message" onClick={() => setStatusMessage('')}>×</button></div>}
