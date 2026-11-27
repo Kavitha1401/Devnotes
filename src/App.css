@@ -191,21 +191,21 @@ button {
 }
 
 .dn-header {
-  height: 52px;
-  flex: 0 0 52px;
+  height: 44px;
+  flex: 0 0 44px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 14px;
+  padding: 0 12px;
   background: var(--dn-surface);
   border-bottom: 1px solid var(--dn-border);
-  gap: 8px;
+  gap: 6px;
 }
 
 .dn-header-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   flex-shrink: 0;
 }
 
@@ -247,18 +247,24 @@ button {
 
 .dn-header-btn {
   border: 1px solid var(--dn-border);
-  border-radius: 6px;
-  padding: 5px 10px;
-  font-size: 12px;
+  border-radius: 5px;
+  height: 24px;
+  padding: 0 8px;
+  font-size: 11px;
   font-weight: 500;
   background: var(--dn-surface);
   color: var(--dn-text);
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  white-space: nowrap;
 }
 
 .dn-header-btn:hover {
   background: var(--dn-bg);
+  border-color: var(--dn-muted);
 }
 
 .dn-header-btn.active {
@@ -269,30 +275,37 @@ button {
 
 .dn-library-toggle {
   border: 1px solid var(--dn-border);
-  border-radius: 6px;
-  padding: 5px 10px;
+  border-radius: 5px;
+  height: 24px;
+  padding: 0 8px;
   color: var(--dn-muted);
   background: var(--dn-surface);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   transition: all 0.15s ease;
+  white-space: nowrap;
 }
 
 .dn-library-toggle:hover {
   background: var(--dn-bg);
   color: var(--dn-text);
+  border-color: var(--dn-muted);
 }
 
 .dn-icon-button {
   border: 0;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   display: grid;
   place-items: center;
-  border-radius: 6px;
+  border-radius: 4px;
   background: transparent;
   color: var(--dn-muted);
-  font-size: 18px;
+  font-size: 14px;
+  cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
 }
 
@@ -338,34 +351,34 @@ button {
 .dn-page {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 16px 8px;
+  gap: 8px;
+  padding: 6px 14px 4px;
 }
 
 .dn-site-icon {
-  width: 32px;
-  height: 32px;
-  flex: 0 0 32px;
-  border-radius: 8px;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  border-radius: 5px;
   display: grid;
   place-items: center;
   background: var(--dn-surface);
   border: 1px solid var(--dn-border);
   color: var(--dn-text);
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 700;
 }
 
 .dn-page-copy {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   min-width: 0;
   flex: 1;
 }
 
 .dn-page-copy strong {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--dn-text);
   overflow: hidden;
@@ -375,7 +388,7 @@ button {
 
 .dn-page-copy span {
   color: var(--dn-muted);
-  font-size: 11px;
+  font-size: 10.5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -383,13 +396,17 @@ button {
 
 .dn-clip {
   border: 1px solid var(--dn-border);
-  border-radius: 6px;
-  padding: 5px 9px;
+  border-radius: 5px;
+  height: 22px;
+  padding: 0 7px;
   color: var(--dn-text);
   background: var(--dn-surface);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 500;
   flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   transition: all 0.15s ease;
 }
 
@@ -402,12 +419,12 @@ button {
 /* Category segmented control */
 .dn-category-tabs {
   display: flex;
-  gap: 3px;
-  margin: 6px 16px 10px;
-  padding: 3px;
+  gap: 2px;
+  margin: 3px 14px 6px;
+  padding: 2px;
   background: var(--dn-surface);
   border: 1px solid var(--dn-border);
-  border-radius: 8px;
+  border-radius: 6px;
 }
 
 .dn-category-tab {
@@ -415,15 +432,16 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 6px 8px;
+  gap: 4px;
+  padding: 3px 5px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 4px;
   background: transparent;
   color: var(--dn-muted);
-  font-size: 12px;
+  font-size: 10.5px;
   font-weight: 500;
   transition: all 0.15s ease;
+  white-space: nowrap;
 }
 
 .dn-category-tab:hover {
@@ -439,8 +457,8 @@ button {
 
 /* Category dots */
 .dn-cat-dot {
-  width: 7px;
-  height: 7px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
   display: inline-block;
   flex: 0 0 auto;
@@ -553,26 +571,26 @@ button {
 
 /* Page heading */
 .dn-page-heading {
-  padding: 4px 16px 10px;
+  padding: 2px 14px 6px;
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
 
 .dn-page-heading h1 {
-  font-size: 16px;
+  font-size: 13px;
   margin: 0;
   font-weight: 600;
   color: var(--dn-text);
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
 }
 
 .dn-page-heading h1 span {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 500;
-  padding: 2px 7px;
+  padding: 1px 5px;
   border-radius: 99px;
   background: var(--dn-surface);
   border: 1px solid var(--dn-border);
@@ -582,18 +600,18 @@ button {
 .dn-heading-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .dn-new {
-  height: 30px;
+  height: 24px;
   border: 1px solid var(--dn-border);
-  border-radius: 6px;
+  border-radius: 5px;
   background: var(--dn-surface);
   color: var(--dn-text);
-  padding: 0 12px;
-  font-size: 12px;
-  font-weight: 600;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 500;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -608,13 +626,13 @@ button {
 }
 
 .dn-template-select {
-  height: 30px;
+  height: 24px;
   border: 1px solid var(--dn-border);
-  border-radius: 6px;
+  border-radius: 5px;
   background: var(--dn-surface);
   color: var(--dn-text);
-  padding: 0 24px 0 10px;
-  font-size: 12px;
+  padding: 0 18px 0 7px;
+  font-size: 10.5px;
   font-family: inherit;
   font-weight: 500;
   cursor: pointer;
@@ -623,7 +641,8 @@ button {
   appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='none' stroke='%2364748b' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m1 1 4 4 4-4'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: right 8px center;
+  background-position: right 6px center;
+  background-size: 7px 4px;
 }
 
 .dn-template-select:hover {
@@ -636,14 +655,14 @@ button {
 
 /* Search bar */
 .dn-search {
-  height: 34px;
-  margin: 0 16px 10px;
-  padding: 0 10px;
+  height: 28px;
+  margin: 0 14px 6px;
+  padding: 0 8px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   border: 1px solid var(--dn-border);
-  border-radius: 8px;
+  border-radius: 6px;
   background: var(--dn-surface);
   transition: border-color 0.15s ease;
 }
@@ -653,8 +672,8 @@ button {
 }
 
 .dn-search svg {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   fill: none;
   stroke: var(--dn-muted);
   stroke-width: 1.8;
@@ -668,7 +687,7 @@ button {
   flex: 1;
   background: transparent;
   color: var(--dn-text);
-  font-size: 12px;
+  font-size: 11.5px;
 }
 
 .dn-search input::placeholder {
@@ -676,12 +695,12 @@ button {
 }
 
 .dn-search kbd {
-  font: 10px var(--dn-font-mono);
+  font: 9.5px var(--dn-font-mono);
   color: var(--dn-muted);
   background: var(--dn-bg);
   border: 1px solid var(--dn-border);
-  border-radius: 4px;
-  padding: 2px 5px;
+  border-radius: 3px;
+  padding: 1px 4px;
 }
 
 /* Content area */
@@ -691,8 +710,8 @@ button {
   flex: 1;
   flex-direction: column;
   overflow: auto;
-  padding: 0 16px 16px;
-  gap: 12px;
+  padding: 0 14px 14px;
+  gap: 8px;
 }
 
 /* Note list rows */
@@ -1977,9 +1996,16 @@ button {
   .dn-panel,
   .dn-launcher,
   .dn-selection-toolbar,
-  .dn-page-layer,
-  .dn-card,
-  .dn-annotation-connectors {
+  .dn-annotation-connectors,
+  .dn-panel-resize-handle {
     display: none !important;
+  }
+
+  mark[data-devnotes-highlight] {
+    background-color: #fef08a !important;
+    color: #0f172a !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    border-bottom: 2px solid #ca8a04 !important;
   }
 }

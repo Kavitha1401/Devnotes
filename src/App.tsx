@@ -1797,6 +1797,121 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     }
   }
 
+  const exportPageWithNotesPdf = () => {
+    document.getElementById('devnotes-print-container')?.remove()
+
+    const container = document.createElement('div')
+    container.id = 'devnotes-print-container'
+
+    const pageNotes = notes
+    const pageHighlights = highlights
+
+    const escapeHtml = (str: string) =>
+      str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+    const notesHtml = pageNotes.map((note) => {
+      const associatedHighlight = pageHighlights.find((h) => h.noteId === note.id || h.id === note.id)
+      const cleanBody = cleanNoteBody(note.body)
+      const lines = cleanBody.split('\n').filter(Boolean)
+      const categoryLabel = note.category === 'todo' ? 'To-do' : note.category === 'idea' ? 'Idea' : note.category === 'remember' ? 'Remember' : note.category === 'question' ? 'Question' : 'Note'
+      const categoryColor = note.category === 'todo' ? '#10b981' : note.category === 'idea' ? '#f59e0b' : note.category === 'remember' ? '#3b82f6' : note.category === 'question' ? '#ec4899' : '#64748b'
+
+      const quoteHtml = associatedHighlight?.text
+        ? `<div style="margin:6px 0 8px; padding:6px 12px; border-left:3px solid #94a3b8; background:#ffffff; font-style:italic; font-size:11px; color:#334155;">
+             <span style="display:block; font-size:9px; font-weight:600; font-style:normal; text-transform:uppercase; color:#64748b; margin-bottom:2px;">Referenced text:</span>
+             “${escapeHtml(associatedHighlight.text)}”
+           </div>`
+        : ''
+
+      const bodyHtml = lines.map((line) => {
+        const taskMatch = line.match(/^\s*[-*+]\s+\[([ xX])\]\s*(.*)$/)
+        if (taskMatch || note.category === 'todo') {
+          const done = taskMatch ? taskMatch[1] !== ' ' : false
+          const text = taskMatch ? taskMatch[2] : line.replace(/^\s*[-*+]\s+/, '')
+          return `<div style="display:flex; align-items:center; gap:6px; margin:3px 0; font-size:12px; color:${done ? '#64748b; text-decoration:line-through;' : '#1e293b;'}">
+                    <span>${done ? '☑' : '☐'}</span>
+                    <span>${escapeHtml(text)}</span>
+                  </div>`
+        }
+        return `<p style="margin:0 0 4px; font-size:12px; line-height:1.5; color:#1e293b;">${escapeHtml(line)}</p>`
+      }).join('')
+
+      const tagsHtml = note.tags && note.tags.length > 0
+        ? `<div style="display:flex; gap:4px; margin-top:8px; flex-wrap:wrap;">
+             ${note.tags.map((t) => `<span style="font-size:9.5px; padding:1px 6px; border:1px solid #cbd5e1; border-radius:3px; background:#ffffff; color:#64748b;">#${escapeHtml(t)}</span>`).join('')}
+           </div>`
+        : ''
+
+      return `
+        <article style="border:1px solid #cbd5e1; border-left:4px solid ${categoryColor}; border-radius:6px; padding:12px 14px; margin-bottom:12px; background:#f8fafc; page-break-inside:avoid; break-inside:avoid;">
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+            <span style="font-size:9.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; padding:2px 6px; border-radius:3px; background:#e2e8f0; color:#334155;">${categoryLabel}</span>
+            ${note.title ? `<strong style="font-size:13px; color:#0f172a;">${escapeHtml(note.title)}</strong>` : ''}
+          </div>
+          ${quoteHtml}
+          ${bodyHtml}
+          ${tagsHtml}
+        </article>
+      `
+    }).join('')
+
+    const dateStr = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+
+    container.innerHTML = `
+      <div style="break-before:page; page-break-before:always; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color:#0f172a; padding:32px 16px; max-width:800px; margin:0 auto;">
+        <header style="border-bottom:2px solid #0f172a; padding-bottom:12px; margin-bottom:20px;">
+          <h2 style="font-size:18px; font-weight:700; margin:0 0 6px; color:#0f172a;">DevNotes · Notes & Highlights Summary</h2>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px 16px; font-size:11px; color:#475569;">
+            <div><strong>Page:</strong> ${escapeHtml(document.title || hostname)}</div>
+            <div><strong>URL:</strong> ${escapeHtml(pageUrl)}</div>
+            <div><strong>Exported:</strong> ${dateStr}</div>
+            <div><strong>Notes on page:</strong> ${pageNotes.length}</div>
+          </div>
+        </header>
+        <section>
+          ${pageNotes.length ? notesHtml : '<p style="color:#64748b; font-size:12px;">No notes recorded for this page.</p>'}
+        </section>
+      </div>
+    `
+
+    document.body.appendChild(container)
+
+    let style = document.getElementById('devnotes-print-style') as HTMLStyleElement | null
+    if (!style) {
+      style = document.createElement('style')
+      style.id = 'devnotes-print-style'
+      document.head.appendChild(style)
+    }
+    style.textContent = `
+      @media screen {
+        #devnotes-print-container { display: none !important; }
+      }
+      @media print {
+        #devnotes-print-container {
+          display: block !important;
+          break-before: page !important;
+          page-break-before: always !important;
+        }
+        mark[data-devnotes-highlight] {
+          background-color: #fef08a !important;
+          color: #0f172a !important;
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+          border-bottom: 2px solid #ca8a04 !important;
+        }
+      }
+    `
+
+    const cleanup = () => {
+      container.remove()
+      window.removeEventListener('afterprint', cleanup)
+    }
+    window.addEventListener('afterprint', cleanup)
+
+    window.print()
+    setTimeout(cleanup, 6000)
+  }
+
   return <>
     {selectionToolbar && (
       <div
@@ -1998,9 +2113,9 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
             onClick={() => setHidePageAnnotations((v) => !v)}
             title={hidePageAnnotations ? "Show notes and highlights on page" : "Hide all notes and highlights on page"}
           >
-            {hidePageAnnotations ? 'Show notes' : 'Hide notes'}
+            {hidePageAnnotations ? 'Show' : 'Hide'}
           </button>
-          <button className="dn-header-btn" onClick={() => window.print()} title="Save or print page as PDF">Save PDF</button>
+          <button className="dn-header-btn" onClick={exportPageWithNotesPdf} title="Export webpage with notes to PDF">Save PDF</button>
           <button className="dn-library-toggle" onClick={() => { const next = !libraryOpen; setLibraryOpen(next); setShowAllNotes(next); if (!next) { setShowArchived(false); setShowFavorites(false); setShowTasks(false); setShowTrash(false) } }}>{libraryOpen ? 'This page' : 'Library'}</button>
           <button className="dn-icon-button" onClick={() => setSettingsOpen(true)} aria-label="Open DevNotes settings" title="Settings">⚙</button>
           <button className="dn-icon-button" onClick={() => setOpen(false)} aria-label="Close panel">×</button>
