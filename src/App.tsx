@@ -336,14 +336,18 @@ function pageTextNodes(searchRoot?: Node): Text[] {
   return nodes
 }
 
-function findContentColumn() {
+function findContentElement(): HTMLElement | null {
   const candidates = Array.from(document.querySelectorAll<HTMLElement>('article, main, [role="main"], [itemprop="articleBody"], .markdown-body, #content, .content, .article, .post-content'))
     .filter((element) => !element.closest('#devnotes-root') && (element.innerText?.length ?? 0) > 200)
     .sort((a, b) => (b.innerText?.length ?? 0) - (a.innerText?.length ?? 0))
   const fallback = Array.from(document.body?.children ?? [])
     .filter((element): element is HTMLElement => element instanceof HTMLElement && !element.matches('nav, header, footer, aside, #devnotes-root') && (element.innerText?.length ?? 0) > 200)
     .sort((a, b) => (b.innerText?.length ?? 0) - (a.innerText?.length ?? 0))[0]
-  const candidate = candidates[0] ?? fallback
+  return candidates[0] ?? fallback ?? null
+}
+
+function findContentColumn() {
+  const candidate = findContentElement()
   if (!candidate) return null
   const rect = candidate.getBoundingClientRect()
   return { left: rect.left, right: rect.right }
@@ -1232,6 +1236,25 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     setAddingCollection(true)
   }
 
+  const isTagInQuery = (tag: string) => {
+    const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const regex = new RegExp(`(?:^|\\s)tag:(?:"${escaped}"|${escaped})(?=\\s|$)`, 'i')
+    return regex.test(query)
+  }
+
+  const toggleTagInQuery = (tag: string) => {
+    const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const regex = new RegExp(`(?:^|\\s)tag:(?:"${escaped}"|${escaped})(?=\\s|$)`, 'gi')
+    if (regex.test(query)) {
+      const nextQuery = query.replace(regex, '').replace(/\s+/g, ' ').trim()
+      setQuery(nextQuery)
+    } else {
+      const tagClause = `tag:"${tag}"`
+      const nextQuery = query.trim() ? `${query.trim()} ${tagClause}` : tagClause
+      setQuery(nextQuery)
+    }
+  }
+
   const updateSettings = (patch: Partial<DevNotesSettings>) => {
     settingsVersionRef.current += 1
     settingsDirtyRef.current = true
@@ -1822,7 +1845,41 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       </div>
     `
 
-    document.body.appendChild(container)
+    if (pageNotes.length > 0) {
+      document.body.appendChild(container)
+    }
+
+    // Prepare host page so it prints cleanly without blank spaces, hidden flex containers, or overlapping fixed headers
+    const contentEl = findContentElement()
+    const modifiedParents: { el: HTMLElement; prevOverflow: string; prevHeight: string; prevDisplay: string }[] = []
+    if (contentEl) {
+      contentEl.classList.add('dn-print-main-content')
+      let curr = contentEl.parentElement
+      while (curr && curr !== document.body && curr !== document.documentElement) {
+        modifiedParents.push({
+          el: curr,
+          prevOverflow: curr.style.overflow,
+          prevHeight: curr.style.height,
+          prevDisplay: curr.style.display,
+        })
+        curr.style.setProperty('overflow', 'visible', 'important')
+        curr.style.setProperty('height', 'auto', 'important')
+        if (window.getComputedStyle(curr).display === 'flex') {
+          curr.style.setProperty('display', 'block', 'important')
+        }
+        curr = curr.parentElement
+      }
+    }
+
+    const fixedElements: { el: HTMLElement; prevPos: string }[] = []
+    document.querySelectorAll<HTMLElement>('body *').forEach((el) => {
+      if (el.id === 'devnotes-print-container' || el.closest('#devnotes-print-container')) return
+      const pos = window.getComputedStyle(el).position
+      if (pos === 'fixed' || pos === 'sticky') {
+        fixedElements.push({ el, prevPos: el.style.position })
+        el.style.setProperty('position', 'static', 'important')
+      }
+    })
 
     let style = document.getElementById('devnotes-print-style') as HTMLStyleElement | null
     if (!style) {
@@ -1835,24 +1892,118 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
         #devnotes-print-container { display: none !important; }
       }
       @media print {
-        #devnotes-print-container, #devnotes-print-container * {
+        #devnotes-root {
+          display: none !important;
+        }
+
+        *, *::before, *::after {
           -webkit-print-color-adjust: exact !important;
           print-color-adjust: exact !important;
         }
+
+        html, body {
+          overflow: visible !important;
+          height: auto !important;
+          min-height: 100% !important;
+          position: static !important;
+          background: #ffffff !important;
+          color: #0f172a !important;
+          margin: 0 !important;
+          padding: 0 !important;
+        }
+
+        body > header,
+        body > footer,
+        body > aside,
+        body > nav,
+        nav:not(article nav),
+        aside:not(article aside),
+        [role="banner"],
+        [role="navigation"],
+        [class*="header-main"],
+        [class*="navbar"],
+        [class*="nav-container"],
+        [class*="sidebar"],
+        [class*="side-bar"],
+        [class*="leftBar"],
+        [class*="rightBar"],
+        [class*="advertisement"],
+        [class*="ad-container"],
+        [class*="adsbygoogle"],
+        [class*="cookie"],
+        [class*="modal"],
+        [class*="popup"],
+        [class*="banner"],
+        [id*="sidebar"],
+        [id*="header-main"],
+        [id*="ad-"] {
+          display: none !important;
+        }
+
+        .dn-print-main-content,
+        main,
+        article,
+        [role="main"],
+        .markdown-body,
+        #content,
+        .content,
+        .article,
+        .post-content,
+        [class*="article-container"],
+        [class*="article-page"],
+        [class*="content-wrapper"],
+        [class*="main-content"] {
+          display: block !important;
+          visibility: visible !important;
+          opacity: 1 !important;
+          float: none !important;
+          width: 100% !important;
+          max-width: 100% !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          overflow: visible !important;
+          position: static !important;
+        }
+
+        h1, h2, h3, h4, h5, h6 {
+          break-after: avoid !important;
+          page-break-after: avoid !important;
+        }
+
+        pre, code, blockquote, table, figure, img {
+          break-inside: avoid !important;
+          page-break-inside: avoid !important;
+          max-width: 100% !important;
+        }
+
         #devnotes-print-container {
           display: block !important;
           break-before: page !important;
           page-break-before: always !important;
+          width: 100% !important;
+          max-width: 800px !important;
+          margin: 0 auto !important;
         }
+
         mark[data-devnotes-highlight] {
           -webkit-print-color-adjust: exact !important;
           print-color-adjust: exact !important;
+          color: inherit !important;
         }
       }
     `
 
     const cleanup = () => {
       container.remove()
+      contentEl?.classList.remove('dn-print-main-content')
+      modifiedParents.forEach(({ el, prevOverflow, prevHeight, prevDisplay }) => {
+        el.style.overflow = prevOverflow
+        el.style.height = prevHeight
+        el.style.display = prevDisplay
+      })
+      fixedElements.forEach(({ el, prevPos }) => {
+        el.style.position = prevPos
+      })
       window.removeEventListener('afterprint', cleanup)
     }
     window.addEventListener('afterprint', cleanup)
@@ -2234,21 +2385,35 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
         <div className="dn-tag-browser">
           <span className="dn-tag-browser-label">Tags</span>
           <div className="dn-tag-browser-list">
-            {availableTags.map((tag) => (
-              <button
-                key={tag}
-                type="button"
-                className="dn-tag-chip"
-                onClick={() => setQuery((value) => `${value} tag:"${tag}"`.trim())}
-                title={`Filter by tag ${tag}`}
-              >
-                #{tag}
-              </button>
-            ))}
+            {availableTags.map((tag) => {
+              const active = isTagInQuery(tag)
+              return (
+                <button
+                  key={tag}
+                  type="button"
+                  className={`dn-tag-chip ${active ? 'active' : ''}`}
+                  onClick={() => toggleTagInQuery(tag)}
+                  title={active ? `Remove tag filter ${tag}` : `Filter by tag ${tag}`}
+                >
+                  #{tag}
+                </button>
+              )
+            })}
           </div>
         </div>
       )}
-      {showAllNotes && bulkSelection.length > 0 && <div className="dn-bulk-actions"><strong>{bulkSelection.length} selected</strong><button onClick={() => setBulkTagEditing(true)}>Add tags</button><button onClick={() => bulkUpdate((note) => ({ ...note, archived: true }))}>Archive</button><button onClick={() => setBulkSelection([])}>Clear</button></div>}
+      {showAllNotes && bulkSelection.length > 0 && (
+        <div className="dn-bulk-actions">
+          <span className="dn-bulk-count">
+            <strong>{bulkSelection.length}</strong> selected
+          </span>
+          <div className="dn-bulk-buttons">
+            <button type="button" className="dn-bulk-btn" onClick={() => setBulkTagEditing(true)}>Add tags</button>
+            <button type="button" className="dn-bulk-btn" onClick={() => bulkUpdate((note) => ({ ...note, archived: true }))}>Archive</button>
+            <button type="button" className="dn-bulk-btn dn-bulk-btn-clear" onClick={() => setBulkSelection([])}>Clear</button>
+          </div>
+        </div>
+      )}
       {bulkTagEditing && <form className="dn-new-collection" onSubmit={(event) => { event.preventDefault(); applyBulkTags() }}><input autoFocus aria-label="Tags to add" placeholder="Tags, separated by commas" value={bulkTagDraft} onChange={(event) => setBulkTagDraft(event.target.value)} /><button type="submit">Apply</button><button type="button" onClick={() => { setBulkTagEditing(false); setBulkTagDraft('') }}>Cancel</button></form>}
       {addingCollection && <form className="dn-new-collection" onSubmit={(event) => { event.preventDefault(); saveCollection() }}><input autoFocus aria-label="Collection name" placeholder="Collection name..." value={collectionDraft} onChange={(event) => setCollectionDraft(event.target.value)} /><button type="submit">Create</button><button type="button" onClick={() => { setAddingCollection(false); setCollectionDraft('') }}>Cancel</button></form>}
       <label className="dn-search"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.8" cy="8.8" r="5.8" /><path d="m13.2 13.2 4 4" /></svg><input ref={searchRef} value={query} onChange={(event) => { setQuery(event.target.value); setLibraryOpen(true); setShowAllNotes(true) }} placeholder="Search notes" /><kbd>{isMac ? '⌘' : 'Ctrl'} K</kbd></label>
