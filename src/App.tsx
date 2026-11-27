@@ -2,7 +2,7 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } f
 import type { CSSProperties } from 'react'
 import { DEFAULT_BLOCKED_HOSTS, DEFAULT_SETTINGS, HIGHLIGHT_COLORS, SETTINGS_KEY, hostMatches, isHostDisabled, normalizeHost, normalizeSettings, readSettings, writeSettings, type DevNotesSettings } from './settings'
 import { cleanNoteBody, isRecord, mergePages, migratePages, normalizePageUrl, removeDeletedPages } from './storage/core'
-import type { Collection, Highlight, Note, NoteCategory, NotePlacement, PageMeta, PageNotes, PageTask, Revision, TrashEntry } from './storage/types'
+import type { Collection, Highlight, Note, NoteCategory, NotePlacement, PageMeta, PageNotes, PageTask, TrashEntry } from './storage/types'
 import { findBestAnchor } from './highlights/anchor'
 import { TagInput } from './components/TagInput'
 import { AnnotationCard } from './components/AnnotationCard'
@@ -20,11 +20,6 @@ const PAGEMETA_KEY = 'devnotes-pagemeta'
 const SCHEMA_VERSION_KEY = 'devnotes-schema-version'
 const CURRENT_SCHEMA_VERSION = 1
 const isIncognitoContext = () => typeof chrome !== 'undefined' && Boolean(chrome.extension?.inIncognitoContext)
-const NOTE_TEMPLATES = {
-  'Bug report': 'Summary:\n\nSteps to reproduce:\n1. \n2. \n\nExpected behavior:\n\nActual behavior:\n\nEnvironment:\n',
-  'Meeting notes': 'Date: \nAttendees: \n\nAgenda:\n\nDiscussion:\n\nDecisions:\n\nAction items:\n',
-  'Reading note': 'Summary:\n\nKey takeaways:\n\nQuotes:\n\nMy thoughts:\n\nNext steps:\n',
-} as const
 
 function stripMarkdownForUI(text: string): string {
   return text
@@ -625,7 +620,6 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   const [showFavorites, setShowFavorites] = useState(false)
   const [showTasks, setShowTasks] = useState(false)
   const [showTrash, setShowTrash] = useState(false)
-  const [showHistory, setShowHistory] = useState(false)
   const [sortMode, setSortMode] = useState<'updated' | 'created' | 'title'>('updated')
   const [domainFilter, setDomainFilter] = useState('')
   const [collectionFilter, setCollectionFilter] = useState('')
@@ -1029,7 +1023,6 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
 
   const allNotes = useMemo(() => Object.entries(pages).flatMap(([url, items]) => items.map((note) => ({ note, url }))), [pages])
   const availableTags = useMemo(() => [...new Set(allNotes.flatMap(({ note }) => note.tags ?? []))].sort((a, b) => a.localeCompare(b)), [allNotes])
-  const backlinks = useMemo(() => selected ? allNotes.filter(({ note }) => note.id !== selected.id && (note.body.toLowerCase().includes(`[[${selected.title.trim().toLowerCase()}]]`) || note.body.includes(`[[id:${selected.id}|`))) : [], [allNotes, selected])
 
   const filteredNotes = useMemo(() => {
     const source = showAllNotes || deferredQuery.trim() || showTasks ? allNotes : notes.map((note) => ({ note, url: pageUrl }))
@@ -1052,13 +1045,6 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   const updateSelected = (patch: Partial<Note>) => {
     if (!selected) return
     persist({ ...pages, [selectedPageUrl]: selectedNotes.map((note) => note.id === selected.id ? { ...note, ...patch, updatedAt: Date.now() } : note) })
-  }
-
-  const restoreRevision = (revision: Revision) => {
-    if (!selected) return
-    const current: Revision = { id: crypto.randomUUID(), title: selected.title, body: selected.body, savedAt: Date.now() }
-    updateSelected({ title: revision.title, body: revision.body, history: [...(selected.history ?? []), current].slice(-settings.historyDepth) })
-    setShowHistory(false)
   }
 
   useEffect(() => {
@@ -1240,10 +1226,6 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     bulkUpdate((note) => ({ ...note, tags: [...new Map([...(note.tags ?? []), ...additions].map((tag) => [tag.toLowerCase(), tag])).values()] }))
     setBulkTagDraft('')
     setBulkTagEditing(false)
-  }
-
-  const createFromTemplate = (template: keyof typeof NOTE_TEMPLATES) => {
-    createNote(NOTE_TEMPLATES[template], template)
   }
 
   const createCollection = () => {
@@ -1612,49 +1594,6 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   }, [createNote, highlights, pageUrl, settings.highlightColor, settings.highlightStyle])
   useEffect(() => { captureSelectionRef.current = captureSelection }, [captureSelection])
 
-  const clipArticle = () => {
-    const isYouTube = location.hostname.includes('youtube.com') || location.hostname.includes('youtu.be')
-    const selection = window.getSelection()?.toString().trim()
-    const now = Date.now()
-
-    let title = (pageTitle || document.title || hostname).trim()
-    let body = ''
-
-    if (isYouTube) {
-      const video = document.querySelector('video')
-      const currentTimeSec = video ? Math.floor(video.currentTime) : 0
-      const minutes = Math.floor(currentTimeSec / 60)
-      const seconds = currentTimeSec % 60
-      const timestampFormatted = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
-
-      const videoUrlObj = new URL(location.href)
-      if (currentTimeSec > 0) {
-        videoUrlObj.searchParams.set('t', `${currentTimeSec}s`)
-      }
-      title = title.replace(/ - YouTube$/, '').trim()
-      body = selection
-        ? `${videoUrlObj.toString()} (${timestampFormatted})\n\n> "${selection}"`
-        : `${videoUrlObj.toString()} (${timestampFormatted})`
-    } else {
-      body = selection
-        ? `${location.href}\n\n> "${selection}"`
-        : `${location.href}`
-    }
-
-    const note: Note = {
-      id: crypto.randomUUID(),
-      title,
-      body: body.trim(),
-      category: 'remember',
-      tags: ['clip'],
-      createdAt: now,
-      updatedAt: now,
-    }
-    persist({ ...pages, [pageUrl]: [note, ...(pages[pageUrl] ?? [])] })
-    setSelectedId(note.id)
-    setOpen(true)
-  }
-
   useEffect(() => {
     const onCapture = () => { if (!captureSelection('note')) setOpen(true) }
     const onNewNote = () => { setOpen(true); createNote() }
@@ -1809,17 +1748,26 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     const escapeHtml = (str: string) =>
       str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
+    const categoryColors: Record<string, string> = {
+      general: '#64748b',
+      todo: '#10b981',
+      idea: '#f59e0b',
+      remember: '#6366f1',
+      question: '#ec4899',
+    }
+
     const notesHtml = pageNotes.map((note) => {
       const associatedHighlight = pageHighlights.find((h) => h.noteId === note.id || h.id === note.id)
       const cleanBody = cleanNoteBody(note.body)
       const lines = cleanBody.split('\n').filter(Boolean)
       const categoryLabel = note.category === 'todo' ? 'To-do' : note.category === 'idea' ? 'Idea' : note.category === 'remember' ? 'Remember' : note.category === 'question' ? 'Question' : 'Note'
-      const categoryColor = note.category === 'todo' ? '#10b981' : note.category === 'idea' ? '#f59e0b' : note.category === 'remember' ? '#3b82f6' : note.category === 'question' ? '#ec4899' : '#64748b'
+      const catColor = categoryColors[note.category || 'general'] || '#64748b'
+      const highlightColor = associatedHighlight?.color || catColor
 
       const quoteHtml = associatedHighlight?.text
-        ? `<div style="margin:6px 0 8px; padding:6px 12px; border-left:3px solid #94a3b8; background:#ffffff; font-style:italic; font-size:11px; color:#334155;">
-             <span style="display:block; font-size:9px; font-weight:600; font-style:normal; text-transform:uppercase; color:#64748b; margin-bottom:2px;">Referenced text:</span>
-             “${escapeHtml(associatedHighlight.text)}”
+        ? `<div style="margin:6px 0 8px; padding:6px 12px; border-left:3px solid ${highlightColor}; background:${associatedHighlight.color ? associatedHighlight.color + '26' : '#f8fafc'}; font-style:italic; font-size:11px; color:#1e293b; -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important;">
+             <span style="display:block; font-size:9px; font-weight:600; font-style:normal; text-transform:uppercase; color:${catColor}; margin-bottom:2px;">Referenced text:</span>
+             “<mark style="background:${associatedHighlight.color || '#fef08a'}; color:#0f172a; padding:1px 4px; border-radius:2px; -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important;">${escapeHtml(associatedHighlight.text)}</mark>”
            </div>`
         : ''
 
@@ -1838,14 +1786,14 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
 
       const tagsHtml = note.tags && note.tags.length > 0
         ? `<div style="display:flex; gap:4px; margin-top:8px; flex-wrap:wrap;">
-             ${note.tags.map((t) => `<span style="font-size:9.5px; padding:1px 6px; border:1px solid #cbd5e1; border-radius:3px; background:#ffffff; color:#64748b;">#${escapeHtml(t)}</span>`).join('')}
+             ${note.tags.map((t) => `<span style="font-size:9.5px; padding:1px 6px; border:1px solid #cbd5e1; border-radius:3px; background:#ffffff; color:#64748b; -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important;">#${escapeHtml(t)}</span>`).join('')}
            </div>`
         : ''
 
       return `
-        <article style="border:1px solid #cbd5e1; border-left:4px solid ${categoryColor}; border-radius:6px; padding:12px 14px; margin-bottom:12px; background:#f8fafc; page-break-inside:avoid; break-inside:avoid;">
+        <article style="border:1px solid #cbd5e1; border-left:4px solid ${highlightColor}; border-radius:6px; padding:12px 14px; margin-bottom:12px; background:#f8fafc; page-break-inside:avoid; break-inside:avoid; -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important;">
           <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-            <span style="font-size:9.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; padding:2px 6px; border-radius:3px; background:#e2e8f0; color:#334155;">${categoryLabel}</span>
+            <span style="font-size:9.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; padding:2px 7px; border-radius:3px; background:${catColor}; color:#ffffff; -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important;">${categoryLabel}</span>
             ${note.title ? `<strong style="font-size:13px; color:#0f172a;">${escapeHtml(note.title)}</strong>` : ''}
           </div>
           ${quoteHtml}
@@ -1858,7 +1806,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     const dateStr = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 
     container.innerHTML = `
-      <div style="break-before:page; page-break-before:always; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color:#0f172a; padding:32px 16px; max-width:800px; margin:0 auto;">
+      <div style="break-before:page; page-break-before:always; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color:#0f172a; padding:32px 16px; max-width:800px; margin:0 auto; -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important;">
         <header style="border-bottom:2px solid #0f172a; padding-bottom:12px; margin-bottom:20px;">
           <h2 style="font-size:18px; font-weight:700; margin:0 0 6px; color:#0f172a;">DevNotes · Notes & Highlights Summary</h2>
           <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px 16px; font-size:11px; color:#475569;">
@@ -1887,17 +1835,18 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
         #devnotes-print-container { display: none !important; }
       }
       @media print {
+        #devnotes-print-container, #devnotes-print-container * {
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+        }
         #devnotes-print-container {
           display: block !important;
           break-before: page !important;
           page-break-before: always !important;
         }
         mark[data-devnotes-highlight] {
-          background-color: #fef08a !important;
-          color: #0f172a !important;
           -webkit-print-color-adjust: exact !important;
           print-color-adjust: exact !important;
-          border-bottom: 2px solid #ca8a04 !important;
         }
       }
     `
@@ -2245,12 +2194,6 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
         </section>
       )}
 
-      <div className="dn-page">
-        <div className="dn-site-icon">{hostname[0]?.toUpperCase()}</div>
-        <div className="dn-page-copy"><strong>{hostname}</strong><span title={pageTitle}>{pageTitle}</span></div>
-        <button className="dn-clip" title="Clip reference or bookmark into note" onClick={clipArticle}>+ Clip</button>
-      </div>
-
       <div className="dn-category-tabs">
         {([
           ['all', 'All'],
@@ -2283,7 +2226,6 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       <div className="dn-page-heading">
         <h1>{showTrash ? 'Trash' : showArchived ? 'Archived' : showTasks ? 'Tasks' : showFavorites ? 'Favorites' : showAllNotes ? 'All notes' : 'Page notes'} <span>{showTrash ? trash.length : showArchived ? allNotes.filter(({ note }) => note.archived).length : showTasks ? allNotes.filter(({ note }) => !note.archived && (/(?:^|\n)\s*[-*+]\s*\[([ xX])\]/.test(note.body) || note.category === 'todo')).length : showFavorites ? allNotes.filter(({ note }) => note.favorite && !note.archived).length : showAllNotes ? allNotes.filter(({ note }) => !note.archived).length : notes.filter((note) => !note.archived).length}</span></h1>
         <div className="dn-heading-actions">
-          <select className="dn-template-select" aria-label="Create note from template" value="" onChange={(event) => { if (event.target.value) createFromTemplate(event.target.value as keyof typeof NOTE_TEMPLATES) }}><option value="">Template…</option>{Object.keys(NOTE_TEMPLATES).map((name) => <option key={name} value={name}>{name}</option>)}</select>
           <button className="dn-new" onClick={() => createNote()}>+ New note</button>
         </div>
       </div>
@@ -2311,7 +2253,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       {addingCollection && <form className="dn-new-collection" onSubmit={(event) => { event.preventDefault(); saveCollection() }}><input autoFocus aria-label="Collection name" placeholder="Collection name..." value={collectionDraft} onChange={(event) => setCollectionDraft(event.target.value)} /><button type="submit">Create</button><button type="button" onClick={() => { setAddingCollection(false); setCollectionDraft('') }}>Cancel</button></form>}
       <label className="dn-search"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.8" cy="8.8" r="5.8" /><path d="m13.2 13.2 4 4" /></svg><input ref={searchRef} value={query} onChange={(event) => { setQuery(event.target.value); setLibraryOpen(true); setShowAllNotes(true) }} placeholder="Search notes" /><kbd>{isMac ? '⌘' : 'Ctrl'} K</kbd></label>
       {statusMessage && <div className="dn-import-status" role="status">{statusMessage}<button aria-label="Dismiss message" onClick={() => setStatusMessage('')}>×</button></div>}
-      {!ready ? <div className="dn-empty">Loading your notes…</div> : showTrash ? <div className="dn-trash-list">{trash.length ? trash.map((entry) => <div className="dn-trash-row" key={entry.note.id}><span><strong>{entry.note.title || 'Untitled note'}</strong><small>{safeHostname(entry.url)}</small></span><button className="dn-preview-toggle" onClick={() => restoreFromTrash(entry)}>Restore</button><button className="dn-delete" onClick={() => { const next = trash.filter((item) => item.note.id !== entry.note.id); setTrash(next); void writeTrash(next) }}>Delete forever</button></div>) : <div className="dn-empty">Trash is empty.</div>}</div> : !showAllNotes && notes.length === 0 && !query.trim() ? <div className="dn-empty-state"><div className="dn-empty-icon">✎</div><strong>A fresh page to think on.</strong><p>Keep the useful bits, questions, and ideas you find here.</p><button onClick={() => createNote()}>Write your first note <span>→</span></button><div className="dn-hint">Select any text on the page to highlight or attach a note.</div></div> : filteredNotes.length === 0 ? <div className="dn-empty">{query.trim() ? `No notes match “${query}”.` : 'No notes here yet.'}</div> : <div className="dn-content">
+      {!ready ? <div className="dn-empty">Loading your notes…</div> : showTrash ? <div className="dn-trash-list">{trash.length ? trash.map((entry) => <div className="dn-trash-row" key={entry.note.id}><span><strong>{entry.note.title || 'Untitled note'}</strong><small>{safeHostname(entry.url)}</small></span><button className="dn-preview-toggle" onClick={() => restoreFromTrash(entry)}>Restore</button><button className="dn-delete" onClick={() => { const next = trash.filter((item) => item.note.id !== entry.note.id); setTrash(next); void writeTrash(next) }}>Delete forever</button></div>) : <div className="dn-empty">Trash is empty.</div>}</div> : !showAllNotes && notes.length === 0 && !query.trim() ? <div className="dn-empty-state"><strong>No notes on this page</strong><button onClick={() => createNote()}>+ New note</button></div> : filteredNotes.length === 0 ? <div className="dn-empty">{query.trim() ? `No notes match “${query}”.` : 'No notes here yet.'}</div> : <div className="dn-content">
         <div className="dn-note-list">{filteredNotes.map(({ note, url }) => {
           const noteTitle = cleanDisplayTitle(note)
           const notePreview = cleanDisplayPreview(note)
@@ -2335,7 +2277,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
             </div>
           )
         })}</div>
-        {selected ? <article className="dn-editor"><div className="dn-editor-top"><div className="dn-editor-category-pills">{(['general', 'todo', 'idea', 'remember', 'question'] as const).map((cat) => <button key={cat} type="button" className={`dn-cat-pill dn-cat-${cat} ${selected.category === cat || (!selected.category && cat === 'general') ? 'active' : ''}`} onClick={() => { updateSelected({ category: cat }); if (cat === 'todo' && !selected.body.trim()) { updateNote('body', '- [ ] ') } }}><span className={`dn-cat-dot dn-cat-${cat}`} />{cat === 'general' ? 'Note' : cat === 'todo' ? 'To-do' : cat === 'idea' ? 'Idea' : cat === 'remember' ? 'Remember' : 'Question'}</button>)}</div><div className="dn-editor-actions"><button type="button" className="dn-action-btn dn-action-close" onClick={() => setSelectedId(null)} title="Close note editor">Close</button><button type="button" className={`dn-action-btn ${selected.pinned ? 'active' : ''}`} onClick={() => updateSelected({ pinned: !selected.pinned })}>{selected.pinned ? 'Pinned' : 'Pin'}</button><button type="button" className="dn-action-btn" onClick={() => setShowHistory((value) => !value)}>History</button><button type="button" className="dn-action-btn dn-action-delete" onClick={() => deleteNote(selected.id, selectedPageUrl)} title="Move note to trash">Delete</button></div></div><input className="dn-title" placeholder="Title (optional)" value={selected.title} onChange={(event) => updateNote('title', event.target.value)} />{showHistory && <div className="dn-history-list">{(selected.history ?? []).length ? [...(selected.history ?? [])].reverse().map((revision) => <button key={revision.id} onClick={() => restoreRevision(revision)}><strong>{revision.title || 'Untitled note'}</strong><small>{new Date(revision.savedAt).toLocaleString()} · Restore</small></button>) : <small>No saved versions yet. Versions are captured during editing.</small>}</div>}{selected.category === 'todo' ? <TodoEditor body={selected.body} onChange={(body) => updateNote('body', body)} /> : <textarea className="dn-body" placeholder="Start writing…" value={selected.body} onChange={(event) => updateNote('body', event.target.value)} />}<div className="dn-collection-assign">{collections.length ? collections.map((collection) => <label key={collection.id}><input type="checkbox" checked={selected.collectionIds?.includes(collection.id) ?? false} onChange={(event) => { const ids = selected.collectionIds ?? []; updateSelected({ collectionIds: event.target.checked ? [...ids, collection.id] : ids.filter((id) => id !== collection.id) }) }} />{collection.name}</label>) : <button type="button" className="dn-collection-create-btn" onClick={createCollection}>+ Create a collection</button>}</div><TagInput key={selected.id} tags={selected.tags ?? []} onCommit={(tags) => updateNote('tags', tags)} />{backlinks.length > 0 && <div className="dn-backlinks"><strong>Linked from</strong>{backlinks.map(({ note, url }) => <button key={note.id} onClick={() => { setSelectedPageUrl(url); setSelectedId(note.id) }}>{note.title || 'Untitled note'}</button>)}</div>}<div className="dn-editor-footer"><span><i />{saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Save failed · try editing again' : 'Saved locally'}</span></div></article> : null}
+        {selected ? <article className="dn-editor"><div className="dn-editor-top"><div className="dn-editor-category-pills">{(['general', 'todo', 'idea', 'remember', 'question'] as const).map((cat) => <button key={cat} type="button" className={`dn-cat-pill dn-cat-${cat} ${selected.category === cat || (!selected.category && cat === 'general') ? 'active' : ''}`} onClick={() => { updateSelected({ category: cat }); if (cat === 'todo' && !selected.body.trim()) { updateNote('body', '- [ ] ') } }}><span className={`dn-cat-dot dn-cat-${cat}`} />{cat === 'general' ? 'Note' : cat === 'todo' ? 'To-do' : cat === 'idea' ? 'Idea' : cat === 'remember' ? 'Remember' : 'Question'}</button>)}</div><div className="dn-editor-actions"><button type="button" className="dn-action-btn dn-action-close" onClick={() => setSelectedId(null)} title="Close note editor">Close</button><button type="button" className={`dn-action-btn ${selected.pinned ? 'active' : ''}`} onClick={() => updateSelected({ pinned: !selected.pinned })}>{selected.pinned ? 'Pinned' : 'Pin'}</button><button type="button" className="dn-action-btn dn-action-delete" onClick={() => deleteNote(selected.id, selectedPageUrl)} title="Move note to trash">Delete</button></div></div><input className="dn-title" placeholder="Title (optional)" value={selected.title} onChange={(event) => updateNote('title', event.target.value)} />{selected.category === 'todo' ? <TodoEditor body={selected.body} onChange={(body) => updateNote('body', body)} /> : <textarea className="dn-body" placeholder="Start writing…" value={selected.body} onChange={(event) => updateNote('body', event.target.value)} />}<TagInput key={selected.id} tags={selected.tags ?? []} onCommit={(tags) => updateNote('tags', tags)} />{saveState === 'error' && <div className="dn-editor-error">Save failed · try editing again</div>}</article> : null}
       </div>}
     </aside>
   </>

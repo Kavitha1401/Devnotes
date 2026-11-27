@@ -347,75 +347,6 @@ button {
   background: #d1fae5;
 }
 
-/* Page context bar */
-.dn-page {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 14px 4px;
-}
-
-.dn-site-icon {
-  width: 24px;
-  height: 24px;
-  flex: 0 0 24px;
-  border-radius: 5px;
-  display: grid;
-  place-items: center;
-  background: var(--dn-surface);
-  border: 1px solid var(--dn-border);
-  color: var(--dn-text);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.dn-page-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-  flex: 1;
-}
-
-.dn-page-copy strong {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--dn-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dn-page-copy span {
-  color: var(--dn-muted);
-  font-size: 10.5px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dn-clip {
-  border: 1px solid var(--dn-border);
-  border-radius: 5px;
-  height: 22px;
-  padding: 0 7px;
-  color: var(--dn-text);
-  background: var(--dn-surface);
-  font-size: 11px;
-  font-weight: 500;
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.15s ease;
-}
-
-.dn-clip:hover {
-  background: var(--dn-bg);
-  border-color: var(--dn-accent);
-  color: var(--dn-accent);
-}
-
 /* Category segmented control */
 .dn-category-tabs {
   display: flex;
@@ -623,34 +554,6 @@ button {
   border-color: var(--dn-accent);
   color: var(--dn-accent);
   background: var(--dn-bg);
-}
-
-.dn-template-select {
-  height: 24px;
-  border: 1px solid var(--dn-border);
-  border-radius: 5px;
-  background: var(--dn-surface);
-  color: var(--dn-text);
-  padding: 0 18px 0 7px;
-  font-size: 10.5px;
-  font-family: inherit;
-  font-weight: 500;
-  cursor: pointer;
-  outline: none;
-  transition: all 0.15s ease;
-  appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='none' stroke='%2364748b' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m1 1 4 4 4-4'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 6px center;
-  background-size: 7px 4px;
-}
-
-.dn-template-select:hover {
-  border-color: var(--dn-accent);
-}
-
-.dn-template-select:focus {
-  border-color: var(--dn-accent);
 }
 
 /* Search bar */
@@ -2002,10 +1905,8 @@ button {
   }
 
   mark[data-devnotes-highlight] {
-    background-color: #fef08a !important;
-    color: #0f172a !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
-    border-bottom: 2px solid #ca8a04 !important;
+    color: inherit !important;
   }
 }
