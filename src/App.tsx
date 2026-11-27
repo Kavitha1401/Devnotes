@@ -2193,13 +2193,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
         aria-label="Open Iris"
         title="Iris"
       >
-        <span className="dn-mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none">
-            <path d="M 2.5 12 C 6.5 6.2, 17.5 6.2, 21.5 12 C 17.5 17.8, 6.5 17.8, 2.5 12 Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-            <circle cx="12" cy="12" r="4.2" stroke="var(--dn-accent)" strokeWidth="1.7" />
-            <circle cx="12" cy="12" r="1.6" fill="var(--dn-accent)" />
-          </svg>
-        </span>
+        <span className="dn-mark">i<span>.</span></span>
       </button>
     )}
 
@@ -2227,16 +2221,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
         title="Drag to resize panel width"
       />
       <header className="dn-header">
-        <div className="dn-brand">
-          <span className="dn-brand-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none">
-              <path d="M 2.5 12 C 6.5 6.2, 17.5 6.2, 21.5 12 C 17.5 17.8, 6.5 17.8, 2.5 12 Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-              <circle cx="12" cy="12" r="4.2" stroke="var(--dn-accent)" strokeWidth="1.7" />
-              <circle cx="12" cy="12" r="1.6" fill="var(--dn-accent)" />
-            </svg>
-          </span>
-          <span className="dn-brand-text">iris</span>
-        </div>
+        <div className="dn-brand"><span className="dn-brand-icon">i<span>.</span></span><span className="dn-brand-text">iris</span></div>
         <div className="dn-header-actions">
           <button
             type="button"

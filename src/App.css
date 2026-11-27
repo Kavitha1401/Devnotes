@@ -116,15 +116,14 @@ button {
 }
 
 .dn-mark {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
+  font-family: var(--dn-font-serif);
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1;
 }
 
-.dn-mark svg, .dn-brand-icon svg {
-  display: block;
+.dn-mark span, .dn-brand-icon span {
+  color: var(--dn-accent);
 }
 
 /* Side Panel */
