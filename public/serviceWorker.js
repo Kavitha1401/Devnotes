@@ -22,17 +22,28 @@ chrome.action.onClicked.addListener(function (tab) {
         console.warn('DevNotes could not be injected on this page:', chrome.runtime.lastError.message)
         return
       }
-      chrome.tabs.sendMessage(tab.id, { type: 'DEVNOTES_TOGGLE' })
+      chrome.tabs.sendMessage(tab.id, { type: 'DEVNOTES_TOGGLE' }, function () {
+        if (chrome.runtime.lastError) {
+          // Consume lastError if tab cannot receive message
+        }
+      })
     })
   })
 })
 
 chrome.runtime.onInstalled.addListener(function () {
   chrome.contextMenus.removeAll(function () {
+    if (chrome.runtime.lastError) {
+      // Consume lastError if removeAll had any issue
+    }
     chrome.contextMenus.create({
       id: 'devnotes-save-selection',
       title: 'Save selection to DevNotes',
       contexts: ['selection'],
+    }, function () {
+      if (chrome.runtime.lastError) {
+        // Consume lastError if item already exists or cannot be created
+      }
     })
   })
 })
@@ -45,7 +56,11 @@ function sendToActiveTab(message) {
       if (!chrome.runtime.lastError) return
       chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] }, function () {
         if (chrome.runtime.lastError) return
-        chrome.tabs.sendMessage(tab.id, message)
+        chrome.tabs.sendMessage(tab.id, message, function () {
+          if (chrome.runtime.lastError) {
+            // Consume lastError if tab cannot receive message
+          }
+        })
       })
     })
   })
