@@ -110,7 +110,7 @@ function writePages(pages: PageNotes, deletedNotes: Record<string, number> = {})
       })
       return
     }
-    if (typeof chrome !== 'undefined' && chrome.runtime) { reject(new Error('Chrome storage is unavailable. Reload DevNotes and refresh this page.')); return }
+    if (typeof chrome !== 'undefined' && chrome.runtime) { reject(new Error('Chrome storage is unavailable. Reload Iris and refresh this page.')); return }
     try {
       const current = migratePages<Note>(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}'))
       let deleted = pruneTombstones({ ...JSON.parse(localStorage.getItem(DELETED_KEY) ?? '{}'), ...deletedNotes })
@@ -698,7 +698,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       if (!active) return
       setRuntimeInvalid(true)
       setReady(true)
-      setStatusMessage('DevNotes could not read local storage. Your edits will stay in memory until you copy them.')
+      setStatusMessage('Iris could not read local storage. Your edits will stay in memory until you copy them.')
     })
     void readCollections().then((saved) => { if (active) { setCollections(saved); setCollectionsReady(true) } })
     void readSettings().then((saved) => {
@@ -1917,7 +1917,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       container.innerHTML = `
         <div style="break-before:page; page-break-before:always; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color:#0f172a; padding:32px 16px; max-width:800px; margin:0 auto; -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important;">
           <header style="border-bottom:2px solid #0f172a; padding-bottom:12px; margin-bottom:20px;">
-            <h2 style="font-size:18px; font-weight:700; margin:0 0 6px; color:#0f172a;">DevNotes · Page Notes</h2>
+            <h2 style="font-size:18px; font-weight:700; margin:0 0 6px; color:#0f172a;">Iris · Page Notes</h2>
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px 16px; font-size:11px; color:#475569;">
               <div><strong>Page:</strong> ${escapeHtml(document.title || hostname)}</div>
               <div><strong>URL:</strong> ${escapeHtml(pageUrl)}</div>
@@ -2186,9 +2186,24 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       ))}
     </div>
 
-    {!open && !settings.hideLauncher && <button className={`dn-launcher ${settings.launcherPosition === 'bottom-left' ? 'dn-launcher-left' : ''} ${effectiveTheme === 'dark' ? 'dn-dark' : effectiveTheme === 'sepia' ? 'dn-theme-sepia' : ''}`} onClick={() => setOpen(true)} aria-label="Open DevNotes" title="DevNotes"><span className="dn-mark">d<span>.</span></span></button>}
+    {!open && !settings.hideLauncher && (
+      <button
+        className={`dn-launcher ${settings.launcherPosition === 'bottom-left' ? 'dn-launcher-left' : ''} ${effectiveTheme === 'dark' ? 'dn-dark' : effectiveTheme === 'sepia' ? 'dn-theme-sepia' : ''}`}
+        onClick={() => setOpen(true)}
+        aria-label="Open Iris"
+        title="Iris"
+      >
+        <span className="dn-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none">
+            <path d="M 2.5 12 C 6.5 6.2, 17.5 6.2, 21.5 12 C 17.5 17.8, 6.5 17.8, 2.5 12 Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+            <circle cx="12" cy="12" r="4.2" stroke="var(--dn-accent)" strokeWidth="1.7" />
+            <circle cx="12" cy="12" r="1.6" fill="var(--dn-accent)" />
+          </svg>
+        </span>
+      </button>
+    )}
 
-    <aside className={`dn-panel dn-theme-${effectiveTheme} ${libraryOpen ? 'dn-library-open' : 'dn-page-view'} ${open ? 'is-open' : ''} ${settings.panelSide === 'left' ? 'dn-panel-left' : ''} ${darkTheme ? 'dn-dark' : ''}`} style={{ width: `min(${settings.panelWidth}px, 100vw)`, left: settings.panelSide === 'left' ? 0 : 'auto', right: settings.panelSide === 'right' ? 0 : 'auto', '--dn-text-scale': settings.textSize === 'small' ? 0.92 : settings.textSize === 'large' ? 1.15 : 1 } as CSSProperties} aria-label="DevNotes panel" aria-hidden={!open}>
+    <aside className={`dn-panel dn-theme-${effectiveTheme} ${libraryOpen ? 'dn-library-open' : 'dn-page-view'} ${open ? 'is-open' : ''} ${settings.panelSide === 'left' ? 'dn-panel-left' : ''} ${darkTheme ? 'dn-dark' : ''}`} style={{ width: `min(${settings.panelWidth}px, 100vw)`, left: settings.panelSide === 'left' ? 0 : 'auto', right: settings.panelSide === 'right' ? 0 : 'auto', '--dn-text-scale': settings.textSize === 'small' ? 0.92 : settings.textSize === 'large' ? 1.15 : 1 } as CSSProperties} aria-label="Iris panel" aria-hidden={!open}>
       <div
         className="dn-panel-resize-handle"
         onPointerDown={(event) => {
@@ -2212,7 +2227,16 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
         title="Drag to resize panel width"
       />
       <header className="dn-header">
-        <div className="dn-brand"><span className="dn-brand-icon">d<span>.</span></span><span className="dn-brand-text">devnotes</span></div>
+        <div className="dn-brand">
+          <span className="dn-brand-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none">
+              <path d="M 2.5 12 C 6.5 6.2, 17.5 6.2, 21.5 12 C 17.5 17.8, 6.5 17.8, 2.5 12 Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              <circle cx="12" cy="12" r="4.2" stroke="var(--dn-accent)" strokeWidth="1.7" />
+              <circle cx="12" cy="12" r="1.6" fill="var(--dn-accent)" />
+            </svg>
+          </span>
+          <span className="dn-brand-text">iris</span>
+        </div>
         <div className="dn-header-actions">
           <button
             type="button"
@@ -2224,16 +2248,16 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
           </button>
           <button className="dn-header-btn" onClick={exportPageWithNotesPdf} title="Export webpage with notes to PDF">Save PDF</button>
           <button className="dn-library-toggle" onClick={() => { const next = !libraryOpen; setLibraryOpen(next); setShowAllNotes(next); if (!next) { setShowArchived(false); setShowFavorites(false); setShowTasks(false); setShowTrash(false) } }}>{libraryOpen ? 'This page' : 'Library'}</button>
-          <button className="dn-icon-button" onClick={() => setSettingsOpen(true)} aria-label="Open DevNotes settings" title="Settings">⚙</button>
+          <button className="dn-icon-button" onClick={() => setSettingsOpen(true)} aria-label="Open Iris settings" title="Settings">⚙</button>
           <button className="dn-icon-button" onClick={() => setOpen(false)} aria-label="Close panel">×</button>
         </div>
       </header>
 
-      {(runtimeInvalid || saveState === 'error') && <div className="dn-recovery-banner" role="alert"><span>{runtimeInvalid ? 'DevNotes was updated, reload this tab.' : 'DevNotes could not save. Your text is still in memory.'}</span><button onClick={() => void copyUnsavedText()}>Copy notes</button></div>}
+      {(runtimeInvalid || saveState === 'error') && <div className="dn-recovery-banner" role="alert"><span>{runtimeInvalid ? 'Iris was updated, reload this tab.' : 'Iris could not save. Your text is still in memory.'}</span><button onClick={() => void copyUnsavedText()}>Copy notes</button></div>}
       {incognitoMode && <div className="dn-privacy-banner" role="status">Incognito mode: notes stay in memory for this tab.</div>}
 
       {settingsOpen && (
-        <section className="dn-settings" role="dialog" aria-label="DevNotes settings">
+        <section className="dn-settings" role="dialog" aria-label="Iris settings">
           <div className="dn-settings-heading">
             <div>
               <strong>Settings</strong>
@@ -2314,7 +2338,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
             </label>
             <div className="dn-site-settings">
               <strong>This site · {hostname}</strong>
-              <button onClick={() => void disableOnThisSite()}>Disable DevNotes on this site</button>
+              <button onClick={() => void disableOnThisSite()}>Disable Iris on this site</button>
             </div>
             <form className="dn-blocklist-add" onSubmit={(event) => { event.preventDefault(); addBlockedHost(blocklistDraft); setBlocklistDraft('') }}>
               <label htmlFor="dn-block-host">Block another site</label>
@@ -2341,7 +2365,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
                 return (
                   <div key={host} className="dn-blocklist-item">
                     <span>{host}</span>
-                    <button aria-label={`${allowed ? 'Block' : 'Allow'} DevNotes on ${host}`} onClick={() => allowed ? addBlockedHost(host) : allowHost(host)}>
+                    <button aria-label={`${allowed ? 'Block' : 'Allow'} Iris on ${host}`} onClick={() => allowed ? addBlockedHost(host) : allowHost(host)}>
                       {allowed ? 'Block' : 'Allow'}
                     </button>
                   </div>

@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <defs>
+    <linearGradient id="iris-bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e1b4b" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+    <linearGradient id="iris-glow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#c084fc" />
+      <stop offset="50%" stop-color="#818cf8" />
+      <stop offset="100%" stop-color="#38bdf8" />
+    </linearGradient>
+    <linearGradient id="petal-grad" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#818cf8" />
+      <stop offset="100%" stop-color="#e879f9" />
+    </linearGradient>
+  </defs>
+  <!-- Rounded container badge for high contrast on any toolbar -->
+  <rect x="2" y="2" width="44" height="44" rx="11" fill="url(#iris-bg)" stroke="#312e81" stroke-width="1.2" />
+  
+  <!-- Graceful eye / petal contour -->
+  <path d="M 9 24 C 15 13, 33 13, 39 24 C 33 35, 15 35, 9 24 Z" 
+        fill="none" 
+        stroke="url(#iris-glow)" 
+        stroke-width="2.6" 
+        stroke-linecap="round" 
+        stroke-linejoin="round" />
+  
+  <!-- Delicate botanical center iris petal / aperture -->
+  <circle cx="24" cy="24" r="7.5" fill="none" stroke="url(#petal-grad)" stroke-width="2.2" />
+  
+  <!-- Central pupil / light reflection -->
+  <circle cx="24" cy="24" r="3.2" fill="#ffffff" />
+  
+  <!-- Ethereal grace sparkle point -->
+  <circle cx="27" cy="21" r="1.1" fill="#ffffff" opacity="0.9" />
+</svg>

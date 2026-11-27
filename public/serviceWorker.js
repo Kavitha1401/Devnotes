@@ -3,10 +3,10 @@ chrome.action.onClicked.addListener(function (tab) {
   if (!tab.url || !/^https?:/.test(tab.url)) {
     chrome.action.setBadgeText({ tabId: tab.id, text: '!' })
     chrome.action.setBadgeBackgroundColor({ tabId: tab.id, color: '#8d6259' })
-    chrome.action.setTitle({ tabId: tab.id, title: 'DevNotes is unavailable on this browser page' })
+    chrome.action.setTitle({ tabId: tab.id, title: 'Iris is unavailable on this browser page' })
     setTimeout(function () {
       chrome.action.setBadgeText({ tabId: tab.id, text: '' })
-      chrome.action.setTitle({ tabId: tab.id, title: 'Open DevNotes' })
+      chrome.action.setTitle({ tabId: tab.id, title: 'Open Iris' })
     }, 2500)
     return
   }
@@ -19,7 +19,7 @@ chrome.action.onClicked.addListener(function (tab) {
       files: ['content.js'],
     }, function () {
       if (chrome.runtime.lastError) {
-        console.warn('DevNotes could not be injected on this page:', chrome.runtime.lastError.message)
+        console.warn('Iris could not be injected on this page:', chrome.runtime.lastError.message)
         return
       }
       chrome.tabs.sendMessage(tab.id, { type: 'DEVNOTES_TOGGLE' }, function () {
@@ -38,7 +38,7 @@ chrome.runtime.onInstalled.addListener(function () {
     }
     chrome.contextMenus.create({
       id: 'devnotes-save-selection',
-      title: 'Save selection to DevNotes',
+      title: 'Save selection to Iris',
       contexts: ['selection'],
     }, function () {
       if (chrome.runtime.lastError) {

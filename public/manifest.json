@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "DevNotes",
+  "name": "Iris",
   "version": "0.1.0",
-  "description": "Save page notes, highlights, and research locally while you browse.",
+  "description": "Graceful in-page notes, highlights, and thoughts while you read and browse.",
   "minimum_chrome_version": "111",
   "icons": {
     "16": "icon16.png",
@@ -12,23 +12,23 @@
   },
   "permissions": ["storage", "unlimitedStorage", "scripting", "contextMenus"],
   "host_permissions": ["<all_urls>"],
-  "action": { "default_title": "Open DevNotes", "default_icon": { "16": "icon16.png", "32": "icon32.png" } },
+  "action": { "default_title": "Open Iris", "default_icon": { "16": "icon16.png", "32": "icon32.png" } },
   "commands": {
     "toggle-sidebar": {
       "suggested_key": { "default": "Alt+Shift+D" },
-      "description": "Toggle the DevNotes sidebar"
+      "description": "Toggle the Iris sidebar"
     },
     "focus-search": {
       "suggested_key": { "default": "Alt+Shift+K" },
-      "description": "Focus DevNotes search"
+      "description": "Focus Iris search"
     },
     "quick-capture": {
       "suggested_key": { "default": "Alt+Shift+S" },
-      "description": "Capture selected text to DevNotes"
+      "description": "Capture selected text to Iris"
     },
     "new-note": {
       "suggested_key": { "default": "Alt+Shift+N" },
-      "description": "Create a DevNotes note"
+      "description": "Create an Iris note"
     }
   },
   "background": { "service_worker": "serviceWorker.js" },
