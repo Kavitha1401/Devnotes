@@ -453,7 +453,8 @@ button {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 2px 14px 6px;
+  padding: 4px 14px;
+  margin-bottom: 6px;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -1724,6 +1725,72 @@ button {
 
 .dn-tags::placeholder {
   color: var(--dn-muted);
+}
+
+/* Note editor collections */
+.dn-editor-collections {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--dn-border);
+}
+
+.dn-editor-collections-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.dn-col-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--dn-text);
+  background: var(--dn-bg);
+  border: 1px solid var(--dn-border);
+}
+
+.dn-col-remove-btn {
+  border: 0;
+  background: transparent;
+  color: var(--dn-muted);
+  font-size: 13px;
+  padding: 0 1px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.dn-col-remove-btn:hover {
+  color: #ef4444;
+}
+
+.dn-col-select-row {
+  display: flex;
+  align-items: center;
+}
+
+.dn-col-select {
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--dn-border);
+  border-radius: 5px;
+  background: var(--dn-surface);
+  color: var(--dn-muted);
+  font-size: 11px;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.15s ease;
+}
+
+.dn-col-select:hover,
+.dn-col-select:focus {
+  color: var(--dn-text);
+  border-color: var(--dn-accent);
 }
 
 /* Settings modal */

@@ -23,7 +23,7 @@ const isIncognitoContext = () => typeof chrome !== 'undefined' && Boolean(chrome
 
 function stripMarkdownForUI(text: string): string {
   return text
-    .replace(/^(\s*[-*+]\s+\[[ xX]\]|\s*[-*+]\s+|#+\s+|>+\s*)/gm, '')
+    .replace(/^(\s*[-*+•–—]\s*(?:\[[ xX]?\]\s*)?|\s*\[[ xX]?\]\s*|#+\s+|>+\s*)/gm, '')
     .replace(/\*\*([^*]+)\*\*/g, '$1')
     .replace(/\*([^*]+)\*/g, '$1')
     .replace(/`([^`]+)`/g, '$1')
@@ -801,7 +801,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     clearPageHighlights()
     void readHighlights().then((saved) => {
       if (!active) return
-      const pageHighlights = saved[pageUrl] ?? []
+      const pageHighlights = (saved[pageUrl] ?? []).filter((item) => !(item.color === 'transparent' && !item.noteId))
       setHighlights(pageHighlights)
       runApplyHighlights(pageHighlights)
       setHighlightsForUrl(pageUrl)
@@ -961,14 +961,16 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     return note.id
   }, [pages, persist, pageUrl])
 
-  const updateNote = (field: 'title' | 'body' | 'tags', value: string | string[]) => {
+  const updateNote = (field: 'title' | 'body' | 'tags' | 'collectionIds', value: string | string[]) => {
     if (!selected) return
     const history = selected.history ?? []
     const lastRevision = history[history.length - 1]
-    const shouldSnapshot = field !== 'tags' && (!lastRevision || Date.now() - lastRevision.savedAt > 30_000)
+    const shouldSnapshot = field !== 'tags' && field !== 'collectionIds' && (!lastRevision || Date.now() - lastRevision.savedAt > 30_000)
     const updated: Note = field === 'tags'
       ? { ...selected, tags: value as string[], updatedAt: Date.now() }
-      : { ...selected, [field]: value as string, updatedAt: Date.now() }
+      : field === 'collectionIds'
+        ? { ...selected, collectionIds: value as string[], updatedAt: Date.now() }
+        : { ...selected, [field]: value as string, updatedAt: Date.now() }
     if (shouldSnapshot) updated.history = [...history, { id: crypto.randomUUID(), title: selected.title, body: selected.body, savedAt: Date.now() }].slice(-settings.historyDepth)
     persist({ ...pages, [selectedPageUrl]: selectedNotes.map((note) => note.id === selected.id ? updated : note) })
   }
@@ -1264,19 +1266,22 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
   }
 
   const isTagInQuery = (tag: string) => {
-    const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const clean = tag.replace(/^#/, '')
+    const escaped = clean.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const regex = new RegExp(`(?:^|\\s)tag:(?:"${escaped}"|${escaped})(?=\\s|$)`, 'i')
     return regex.test(query)
   }
 
   const toggleTagInQuery = (tag: string) => {
-    const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const regex = new RegExp(`(?:^|\\s)tag:(?:"${escaped}"|${escaped})(?=\\s|$)`, 'gi')
-    if (regex.test(query)) {
-      const nextQuery = query.replace(regex, '').replace(/\s+/g, ' ').trim()
+    const clean = tag.replace(/^#/, '')
+    const escaped = clean.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const testRegex = new RegExp(`(?:^|\\s)tag:(?:"${escaped}"|${escaped})(?=\\s|$)`, 'i')
+    const replaceRegex = new RegExp(`(?:^|\\s)tag:(?:"${escaped}"|${escaped})(?=\\s|$)`, 'gi')
+    if (testRegex.test(query)) {
+      const nextQuery = query.replace(replaceRegex, '').replace(/\s+/g, ' ').trim()
       setQuery(nextQuery)
     } else {
-      const tagClause = `tag:"${tag}"`
+      const tagClause = `tag:"${clean}"`
       const nextQuery = query.trim() ? `${query.trim()} ${tagClause}` : tagClause
       setQuery(nextQuery)
     }
@@ -1613,15 +1618,38 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     // Step 3: Get clean text nodes and wrap the new mark
     const nodes = pageTextNodes()
 
+    let attachedNoteId = inheritedNoteId
+    if (action === 'note' && !attachedNoteId) {
+      const now = Date.now()
+      const newNote: Note = {
+        id: crypto.randomUUID(),
+        title: '',
+        body: '',
+        category: 'general',
+        tags: [],
+        collectionIds: [],
+        pinned: false,
+        favorite: false,
+        archived: false,
+        createdAt: now,
+        updatedAt: now,
+      }
+      persist({ ...pages, [pageUrl]: [newNote, ...(pages[pageUrl] ?? [])] })
+      attachedNoteId = newNote.id
+    }
+
+    const highlightColor = color || settings.highlightColor || '#fef08a'
+    const highlightShape = shape ?? settings.highlightStyle ?? 'marker'
+
     const item: Highlight = {
       id: crypto.randomUUID(),
-      noteId: inheritedNoteId,
+      noteId: attachedNoteId,
       text,
       prefix,
       suffix,
-      color: action === 'note' ? 'transparent' : color,
+      color: highlightColor,
       createdAt: Date.now(),
-      shape: action === 'note' ? 'none' : (shape ?? settings.highlightStyle),
+      shape: highlightShape,
       display: 'inline',
       placement: { side: 'right', dx: 24, dy: 0 },
       status: 'attached',
@@ -1641,7 +1669,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     }
     setAnnotationLayoutTick((t) => t + 1)
     return true
-  }, [createNote, highlights, pageUrl, settings.highlightColor, settings.highlightStyle])
+  }, [createNote, highlights, pageUrl, pages, persist, settings.highlightColor, settings.highlightStyle])
   useEffect(() => { captureSelectionRef.current = captureSelection }, [captureSelection])
 
   useEffect(() => {
@@ -1905,38 +1933,6 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       document.body.appendChild(container)
     }
 
-    // Prepare host page so it prints cleanly without blank spaces, hidden flex containers, or overlapping fixed headers
-    const contentEl = findContentElement()
-    const modifiedParents: { el: HTMLElement; prevOverflow: string; prevHeight: string; prevDisplay: string }[] = []
-    if (contentEl) {
-      contentEl.classList.add('dn-print-main-content')
-      let curr = contentEl.parentElement
-      while (curr && curr !== document.body && curr !== document.documentElement) {
-        modifiedParents.push({
-          el: curr,
-          prevOverflow: curr.style.overflow,
-          prevHeight: curr.style.height,
-          prevDisplay: curr.style.display,
-        })
-        curr.style.setProperty('overflow', 'visible', 'important')
-        curr.style.setProperty('height', 'auto', 'important')
-        if (window.getComputedStyle(curr).display === 'flex') {
-          curr.style.setProperty('display', 'block', 'important')
-        }
-        curr = curr.parentElement
-      }
-    }
-
-    const fixedElements: { el: HTMLElement; prevPos: string }[] = []
-    document.querySelectorAll<HTMLElement>('body *').forEach((el) => {
-      if (el.id === 'devnotes-print-container' || el.closest('#devnotes-print-container')) return
-      const pos = window.getComputedStyle(el).position
-      if (pos === 'fixed' || pos === 'sticky') {
-        fixedElements.push({ el, prevPos: el.style.position })
-        el.style.setProperty('position', 'static', 'important')
-      }
-    })
-
     let style = document.getElementById('devnotes-print-style') as HTMLStyleElement | null
     if (!style) {
       style = document.createElement('style')
@@ -1955,7 +1951,8 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
 
         .dn-print-inline-note,
         .dn-print-inline-note *,
-        *, *::before, *::after {
+        mark[data-devnotes-highlight],
+        mark[data-devnotes-highlight] * {
           -webkit-print-color-adjust: exact !important;
           print-color-adjust: exact !important;
         }
@@ -1970,75 +1967,15 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
           overflow: visible !important;
           height: auto !important;
           min-height: 100% !important;
-          position: static !important;
           background: #ffffff !important;
-          color: #0f172a !important;
-          margin: 0 !important;
-          padding: 0 !important;
         }
 
-        body > header,
-        body > footer,
-        body > aside,
-        body > nav,
-        nav:not(article nav),
-        aside:not(article aside),
-        [role="banner"],
-        [role="navigation"],
-        [class*="header-main"],
-        [class*="navbar"],
-        [class*="nav-container"],
-        [class*="sidebar"],
-        [class*="side-bar"],
-        [class*="leftBar"],
-        [class*="rightBar"],
-        [class*="advertisement"],
-        [class*="ad-container"],
-        [class*="adsbygoogle"],
-        [class*="cookie"],
-        [class*="modal"],
-        [class*="popup"],
-        [class*="banner"],
-        [id*="sidebar"],
-        [id*="header-main"],
-        [id*="ad-"] {
+        ins.adsbygoogle,
+        .adsbygoogle,
+        [id*="google_ads_"],
+        [class*="cookie-banner"],
+        [class*="consent-banner"] {
           display: none !important;
-        }
-
-        .dn-print-main-content,
-        main,
-        article,
-        [role="main"],
-        .markdown-body,
-        #content,
-        .content,
-        .article,
-        .post-content,
-        [class*="article-container"],
-        [class*="article-page"],
-        [class*="content-wrapper"],
-        [class*="main-content"] {
-          display: block !important;
-          visibility: visible !important;
-          opacity: 1 !important;
-          float: none !important;
-          width: 100% !important;
-          max-width: 100% !important;
-          margin: 0 !important;
-          padding: 0 !important;
-          overflow: visible !important;
-          position: static !important;
-        }
-
-        h1, h2, h3, h4, h5, h6 {
-          break-after: avoid !important;
-          page-break-after: avoid !important;
-        }
-
-        pre, code, blockquote, table, figure, img {
-          break-inside: avoid !important;
-          page-break-inside: avoid !important;
-          max-width: 100% !important;
         }
 
         #devnotes-print-container {
@@ -2061,15 +1998,6 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     const cleanup = () => {
       inlineElements.forEach((el) => el.remove())
       container.remove()
-      contentEl?.classList.remove('dn-print-main-content')
-      modifiedParents.forEach(({ el, prevOverflow, prevHeight, prevDisplay }) => {
-        el.style.overflow = prevOverflow
-        el.style.height = prevHeight
-        el.style.display = prevDisplay
-      })
-      fixedElements.forEach(({ el, prevPos }) => {
-        el.style.position = prevPos
-      })
       window.removeEventListener('afterprint', cleanup)
     }
     window.addEventListener('afterprint', cleanup)
@@ -2151,6 +2079,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
         <button
           type="button"
           className="dn-toolbar-note-btn"
+          title="Highlight and add note"
           onPointerDown={(event) => event.stopPropagation()}
           onMouseDown={(event) => {
             event.preventDefault()
@@ -2163,6 +2092,18 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
             const selection = window.getSelection()
             const hasSelection = Boolean(selection && !selection.isCollapsed && selection.toString().trim())
             if (activeId && !hasSelection) {
+              const targetHighlight = highlights.find((h) => h.id === activeId)
+              if (targetHighlight && !targetHighlight.noteId) {
+                const now = Date.now()
+                const newNote: Note = { id: crypto.randomUUID(), title: '', body: '', category: 'general', tags: [], collectionIds: [], pinned: false, favorite: false, archived: false, createdAt: now, updatedAt: now }
+                persist({ ...pages, [pageUrl]: [newNote, ...(pages[pageUrl] ?? [])] })
+                const nextHighlights = highlights.map((h) => h.id === activeId ? { ...h, noteId: newNote.id } : h)
+                setHighlights(nextHighlights)
+                void readHighlights().then((saved) => {
+                  saved[pageUrl] = nextHighlights
+                  return writeHighlights(saved)
+                })
+              }
               setEditing(activeId, true)
             } else {
               captureSelection('note')
@@ -2562,7 +2503,89 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
             </div>
           )
         })}</div>
-        {selected ? <article className="dn-editor"><div className="dn-editor-top"><div className="dn-editor-category-pills">{(['general', 'todo', 'idea', 'remember', 'question'] as const).map((cat) => <button key={cat} type="button" className={`dn-cat-pill dn-cat-${cat} ${selected.category === cat || (!selected.category && cat === 'general') ? 'active' : ''}`} onClick={() => { updateSelected({ category: cat }); if (cat === 'todo' && !selected.body.trim()) { updateNote('body', '- [ ] ') } }}><span className={`dn-cat-dot dn-cat-${cat}`} />{cat === 'general' ? 'Note' : cat === 'todo' ? 'To-do' : cat === 'idea' ? 'Idea' : cat === 'remember' ? 'Remember' : 'Question'}</button>)}</div><div className="dn-editor-actions"><button type="button" className="dn-action-btn dn-action-close" onClick={() => setSelectedId(null)} title="Close note editor">Close</button><button type="button" className={`dn-action-btn ${selected.pinned ? 'active' : ''}`} onClick={() => updateSelected({ pinned: !selected.pinned })}>{selected.pinned ? 'Pinned' : 'Pin'}</button><button type="button" className="dn-action-btn dn-action-delete" onClick={() => deleteNote(selected.id, selectedPageUrl)} title="Move note to trash">Delete</button></div></div><input className="dn-title" placeholder="Title (optional)" value={selected.title} onChange={(event) => updateNote('title', event.target.value)} />{selected.category === 'todo' ? <TodoEditor body={selected.body} onChange={(body) => updateNote('body', body)} /> : <textarea className="dn-body" placeholder="Start writing…" value={selected.body} onChange={(event) => updateNote('body', event.target.value)} />}<TagInput key={selected.id} tags={selected.tags ?? []} onCommit={(tags) => updateNote('tags', tags)} />{saveState === 'error' && <div className="dn-editor-error">Save failed · try editing again</div>}</article> : null}
+        {selected ? (
+          <article className="dn-editor">
+            <div className="dn-editor-top">
+              <div className="dn-editor-category-pills">
+                {(['general', 'todo', 'idea', 'remember', 'question'] as const).map((cat) => (
+                  <button
+                    key={cat}
+                    type="button"
+                    className={`dn-cat-pill dn-cat-${cat} ${selected.category === cat || (!selected.category && cat === 'general') ? 'active' : ''}`}
+                    onClick={() => {
+                      updateSelected({ category: cat })
+                      if (cat === 'todo' && !selected.body.trim()) {
+                        updateNote('body', '- [ ] ')
+                      }
+                    }}
+                  >
+                    <span className={`dn-cat-dot dn-cat-${cat}`} />
+                    {cat === 'general' ? 'Note' : cat === 'todo' ? 'To-do' : cat === 'idea' ? 'Idea' : cat === 'remember' ? 'Remember' : 'Question'}
+                  </button>
+                ))}
+              </div>
+              <div className="dn-editor-actions">
+                <button type="button" className="dn-action-btn dn-action-close" onClick={() => setSelectedId(null)} title="Close note editor">Close</button>
+                <button type="button" className={`dn-action-btn ${selected.pinned ? 'active' : ''}`} onClick={() => updateSelected({ pinned: !selected.pinned })}>{selected.pinned ? 'Pinned' : 'Pin'}</button>
+                <button type="button" className="dn-action-btn dn-action-delete" onClick={() => deleteNote(selected.id, selectedPageUrl)} title="Move note to trash">Delete</button>
+              </div>
+            </div>
+            <input className="dn-title" placeholder="Title (optional)" value={selected.title} onChange={(event) => updateNote('title', event.target.value)} />
+            {selected.category === 'todo' ? <TodoEditor body={selected.body} onChange={(body) => updateNote('body', body)} /> : <textarea className="dn-body" placeholder="Start writing…" value={selected.body} onChange={(event) => updateNote('body', event.target.value)} />}
+            <TagInput key={selected.id} tags={selected.tags ?? []} onCommit={(tags) => updateNote('tags', tags)} />
+            <div className="dn-editor-collections">
+              <div className="dn-editor-collections-pills">
+                {(selected.collectionIds ?? []).map((colId) => {
+                  const col = collections.find((c) => c.id === colId)
+                  if (!col) return null
+                  return (
+                    <span key={col.id} className="dn-col-pill">
+                      {col.name}
+                      <button
+                        type="button"
+                        className="dn-col-remove-btn"
+                        title={`Remove from ${col.name}`}
+                        aria-label={`Remove from ${col.name}`}
+                        onClick={() => {
+                          const next = (selected.collectionIds ?? []).filter((id) => id !== col.id)
+                          updateNote('collectionIds', next)
+                        }}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  )
+                })}
+              </div>
+              <div className="dn-col-select-row">
+                <select
+                  className="dn-col-select"
+                  aria-label="Add note to collection"
+                  value=""
+                  onChange={(event) => {
+                    const val = event.target.value
+                    if (!val) return
+                    if (val === '__new__') {
+                      setAddingCollection(true)
+                    } else {
+                      const next = [...new Set([...(selected.collectionIds ?? []), val])]
+                      updateNote('collectionIds', next)
+                    }
+                  }}
+                >
+                  <option value="">+ Add to collection...</option>
+                  {collections
+                    .filter((c) => !(selected.collectionIds ?? []).includes(c.id))
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  <option value="__new__">+ Create new collection...</option>
+                </select>
+              </div>
+            </div>
+            {saveState === 'error' && <div className="dn-editor-error">Save failed · try editing again</div>}
+          </article>
+        ) : null}
       </div>}
     </aside>
   </>
