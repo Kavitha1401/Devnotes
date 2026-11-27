@@ -11,8 +11,8 @@ const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" 
   <!-- Rounded container badge matching dn-brand-icon -->
   <rect x="2" y="2" width="44" height="44" rx="10" fill="url(#iris-bg)" stroke="#312e81" stroke-width="1.5" />
   
-  <!-- Serif lettermark i. with accent dot -->
-  <text x="21" y="33" font-family="Charter, 'Bitstream Charter', 'Sitka Text', Cambria, Georgia, serif" font-size="28" font-weight="700" fill="#f8fafc" text-anchor="middle">i<tspan fill="#818cf8">.</tspan></text>
+  <!-- Serif lettermark i. optically centered with balanced left and right padding -->
+  <text x="23.5" y="33" font-family="Charter, 'Bitstream Charter', 'Sitka Text', Cambria, Georgia, serif" font-size="28" font-weight="700" fill="#f8fafc" text-anchor="middle">i<tspan fill="#818cf8" dx="1">.</tspan></text>
 </svg>`
 
 async function main() {
