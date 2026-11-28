@@ -13,12 +13,13 @@ export function TodoEditor({
   const tasks = useMemo(() => {
     const lines = body.split('\n')
     const list: { done: boolean; text: string }[] = []
+    const taskRegex = /^\s*(?:(?:[-*+]|\d+\.)\s+)?\[\s*([xXvV]?)\s*\]\s*(.*)$/
     for (const line of lines) {
-      const match = line.match(/^\s*[-*+]\s+\[([ xX])\]\s*(.*)$/)
+      const match = line.match(taskRegex)
       if (match) {
-        list.push({ done: match[1] !== ' ', text: match[2] })
+        list.push({ done: Boolean(match[1]), text: match[2] })
       } else if (line.trim()) {
-        list.push({ done: false, text: line.replace(/^\s*[-*+]\s+/, '') })
+        list.push({ done: false, text: line.replace(/^\s*(?:[-*+•–—]|\d+\.)\s*/, '') })
       }
     }
     return list.length ? list : [{ done: false, text: '' }]

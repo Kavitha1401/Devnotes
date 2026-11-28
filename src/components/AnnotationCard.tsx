@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import type { Highlight, NoteCategory } from '../storage/types'
 
-const CARD_TASK_LINE = /^\s*[-*+]\s+\[([ xX])\]\s*(.*)$/
+const CARD_TASK_LINE = /^\s*(?:(?:[-*+]|\d+\.)\s+)?\[\s*([xXvV]?)\s*\]\s*(.*)$/
 
 const CATEGORY_CONFIG: Record<NoteCategory, { label: string; color: string }> = {
   general: { label: 'Note', color: '#64748b' },
@@ -33,7 +33,8 @@ function CardBody({ body, category, editing, onChange, onEditingChange }: {
   }
 
   const reading = !editing && draft.trim().length > 0
-  const isTodoCategory = category === 'todo'
+  const isTodoContent = /(?:^|\n)\s*(?:(?:[-*+]|\d+\.)\s+)?\[\s*[xXvV]?\s*\]/.test(draft)
+  const isTodoCategory = category === 'todo' || isTodoContent
 
   useLayoutEffect(() => {
     const el = ref.current
@@ -52,9 +53,9 @@ function CardBody({ body, category, editing, onChange, onEditingChange }: {
     const line = lines[lineIndex]
     const match = line.match(CARD_TASK_LINE)
     if (match) {
-      lines[lineIndex] = line.replace(/^(\s*[-*+]\s+\[)[ xX](\])/, `$1${nextDone ? 'x' : ' '}$2`)
+      lines[lineIndex] = `- [${nextDone ? 'x' : ' '}] ${match[2]}`
     } else {
-      const content = line.replace(/^\s*[-*+]\s+/, '')
+      const content = line.replace(/^\s*(?:[-*+•–—]|\d+\.)\s*/, '')
       lines[lineIndex] = `- [${nextDone ? 'x' : ' '}] ${content}`
     }
     const newBody = lines.join('\n')
@@ -68,8 +69,8 @@ function CardBody({ body, category, editing, onChange, onEditingChange }: {
       {lines.map((line, index) => {
         const task = line.match(CARD_TASK_LINE)
         if (task || isTodoCategory) {
-          const done = task ? task[1] !== ' ' : false
-          const text = task ? task[2] : line.replace(/^\s*[-*+]\s+/, '')
+          const done = task ? Boolean(task[1]) : false
+          const text = task ? task[2] : line.replace(/^\s*(?:[-*+•–—]|\d+\.)\s*/, '')
           if (!text.trim() && lines.length > 1) return null
           return <div key={index} className={`dn-card-task ${done ? 'is-done' : ''}`} onClick={(event) => event.stopPropagation()}>
             <button
@@ -157,7 +158,8 @@ export function AnnotationCard({
   const dragOffset = useRef<{ x: number; y: number } | null>(null)
   const isDragging = useRef(false)
   const [overrideCategory, setOverrideCategory] = useState<NoteCategory | null>(null)
-  const currentCategory = overrideCategory ?? category ?? 'general'
+  const isTodoContent = /(?:^|\n)\s*(?:(?:[-*+]|\d+\.)\s+)?\[\s*[xXvV]?\s*\]/.test(body)
+  const currentCategory = overrideCategory ?? (isTodoContent && (!category || category === 'general') ? 'todo' : (category ?? 'general'))
   const config = CATEGORY_CONFIG[currentCategory]
 
   const cycleCategory = () => {

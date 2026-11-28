@@ -51,7 +51,7 @@ const NOTE_TEMPLATES: Record<string, { title: string; body: string; category?: N
 
 function stripMarkdownForUI(text: string): string {
   return text
-    .replace(/^(\s*[-*+•–—]\s*(?:\[[ xX]?\]\s*)?|\s*\[[ xX]?\]\s*|#+\s+|>+\s*)/gm, '')
+    .replace(/^(\s*(?:[-*+•–—]|\d+\.)\s*(?:\[\s*[xXvV]?\s*\]\s*)?|\s*\[\s*[xXvV]?\s*\]\s*|#+\s+|>+\s*)/gm, '')
     .replace(/\*\*([^*]+)\*\*/g, '$1')
     .replace(/\*([^*]+)\*/g, '$1')
     .replace(/`([^`]+)`/g, '$1')
@@ -65,14 +65,15 @@ function cleanDisplayTitle(note: Note): string {
   const lines = note.body.trim().split('\n').filter(Boolean)
   const firstLine = lines[0] ?? ''
   const cleaned = stripMarkdownForUI(firstLine).slice(0, 50)
-  return cleaned || (note.category === 'todo' ? 'To-do item' : 'Untitled note')
+  const isTodo = note.category === 'todo' || /(?:^|\n)\s*(?:(?:[-*+]|\d+\.)\s+)?\[\s*[xXvV]?\s*\]/.test(note.body)
+  return cleaned || (isTodo ? 'To-do item' : 'Untitled note')
 }
 
 function cleanDisplayPreview(note: Note): string {
-  if (note.category === 'todo' || /(?:^|\n)\s*[-*+]\s*\[[ xX]\]/.test(note.body)) {
-    const taskLines = note.body.split('\n').filter((l) => /^\s*[-*+]\s*\[[ xX]\]/.test(l))
+  if (note.category === 'todo' || /(?:^|\n)\s*(?:(?:[-*+]|\d+\.)\s+)?\[\s*[xXvV]?\s*\]/.test(note.body)) {
+    const taskLines = note.body.split('\n').filter((l) => /^\s*(?:(?:[-*+]|\d+\.)\s+)?\[\s*[xXvV]?\s*\]/.test(l))
     if (taskLines.length > 0) {
-      const doneCount = taskLines.filter((l) => /^\s*[-*+]\s*\[[xX]\]/.test(l)).length
+      const doneCount = taskLines.filter((l) => /^\s*(?:(?:[-*+]|\d+\.)\s+)?\[\s*[xXvV]+\s*\]/.test(l)).length
       return `${doneCount} of ${taskLines.length} completed`
     }
   }
@@ -988,14 +989,16 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     setPages(next)
   }, [])
 
-  const createNote = useCallback((body = '', title = '') => {
+  const createNote = useCallback((body = '', title = '', explicitCategory?: NoteCategory) => {
     const now = Date.now()
-    const note: Note = { id: crypto.randomUUID(), title, body, tags: [], collectionIds: [], pinned: false, favorite: false, archived: false, createdAt: now, updatedAt: now }
+    const targetCategory = explicitCategory ?? (showTasks || categoryFilter === 'todo' ? 'todo' : 'general')
+    const initialBody = body || (targetCategory === 'todo' ? '- [ ] ' : '')
+    const note: Note = { id: crypto.randomUUID(), title, body: initialBody, category: targetCategory, tags: [], collectionIds: [], pinned: false, favorite: false, archived: false, createdAt: now, updatedAt: now }
     persist({ ...pages, [pageUrl]: [note, ...(pages[pageUrl] ?? [])] })
     setSelectedPageUrl(pageUrl)
     setSelectedId(note.id)
     return note.id
-  }, [pages, persist, pageUrl])
+  }, [pages, persist, pageUrl, showTasks, categoryFilter])
 
   const createFromTemplate = useCallback((templateName: keyof typeof NOTE_TEMPLATES) => {
     const tmpl = NOTE_TEMPLATES[templateName]
@@ -1100,10 +1103,11 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     const from = parsed.after
     const to = parsed.before
     const matches = source.filter(({ note, url }) => {
-      if (categoryFilter !== 'all' && (note.category || 'general') !== categoryFilter) return false
+      const task = /(?:^|\n)\s*(?:(?:[-*+]|\d+\.)\s+)?\[\s*[xXvV]?\s*\]/.test(note.body) || note.category === 'todo'
+      const effectiveCat = task ? 'todo' : (note.category || 'general')
+      if (categoryFilter !== 'all' && effectiveCat !== categoryFilter) return false
       const tags = (note.tags ?? []).map((tag) => tag.toLowerCase())
       const searchable = `${note.title} ${note.body} ${tags.join(' ')} ${url}`.toLowerCase()
-      const task = /(?:^|\n)\s*[-*+]\s*\[([ xX])\]/.test(note.body) || note.category === 'todo'
       const quoted = /^\s*>/m.test(note.body)
       const host = safeHostname(url).toLowerCase()
       return Boolean(note.archived) === showArchived && (!showFavorites || Boolean(note.favorite)) && (!showTasks || task) && (!collectionFilter || note.collectionIds?.includes(collectionFilter)) && (!domainFilter || host.includes(domainFilter.toLowerCase())) && parsed.tags.every((tag) => tags.some((existing) => existing.includes(tag))) && parsed.sites.every((site) => host.includes(site)) && parsed.flags.every((flag) => flag === 'task' ? task : flag === 'favorite' ? Boolean(note.favorite) : flag === 'pinned' ? Boolean(note.pinned) : flag === 'quote' ? quoted : flag === 'archived' ? Boolean(note.archived) : true) && (!from || note.updatedAt >= from) && (!to || note.updatedAt <= to) && parsed.terms.every((term) => fuzzyContains(searchable, term))
@@ -1466,14 +1470,27 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
 
   // The note is created lazily, on the first character typed, so an untouched card never leaves an empty note behind.
   const setAnnotationText = (item: Highlight, text: string) => {
+    const isTodo = /(?:^|\n)\s*(?:(?:[-*+]|\d+\.)\s+)?\[\s*[xXvV]?\s*\]/.test(text)
     if (item.noteId) {
       const noteUrl = allNotes.find(({ note }) => note.id === item.noteId)?.url ?? pageUrl
-      persist({ ...pages, [noteUrl]: (pages[noteUrl] ?? []).map((note) => note.id === item.noteId ? { ...note, body: text, updatedAt: Date.now() } : note) })
+      persist({
+        ...pages,
+        [noteUrl]: (pages[noteUrl] ?? []).map((note) =>
+          note.id === item.noteId
+            ? {
+                ...note,
+                body: text,
+                category: isTodo && (!note.category || note.category === 'general') ? 'todo' : note.category,
+                updatedAt: Date.now(),
+              }
+            : note
+        ),
+      })
       return
     }
     if (!text.trim()) return
     const now = Date.now()
-    const note: Note = { id: crypto.randomUUID(), title: '', body: text, category: 'general', tags: [], collectionIds: [], pinned: false, favorite: false, archived: false, createdAt: now, updatedAt: now }
+    const note: Note = { id: crypto.randomUUID(), title: '', body: text, category: isTodo ? 'todo' : 'general', tags: [], collectionIds: [], pinned: false, favorite: false, archived: false, createdAt: now, updatedAt: now }
     persist({ ...pages, [pageUrl]: [note, ...(pages[pageUrl] ?? [])] })
     const nextHighlights = highlights.map((entry) => entry.id === item.id ? { ...entry, noteId: note.id } : entry)
     setHighlights(nextHighlights)
@@ -1505,20 +1522,22 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     const note = selectedNotes.find((n) => n.id === noteId) || allNotes.find(({ note: n }) => n.id === noteId)?.note
     if (!note) return
     const lines = note.body.split('\n')
+    const taskRegex = /^\s*(?:(?:[-*+]|\d+\.)\s+)?\[\s*([xXvV]?)\s*\]\s*(.*)$/
     if (lineIndex >= 0 && lineIndex < lines.length) {
       const line = lines[lineIndex]
-      const match = line.match(/^\s*[-*+]\s+\[([ xX])\]\s*(.*)$/)
+      const match = line.match(taskRegex)
       if (match) {
-        lines[lineIndex] = line.replace(/^(\s*[-*+]\s+\[)[ xX](\])/, `$1${done ? 'x' : ' '}$2`)
+        lines[lineIndex] = `- [${done ? 'x' : ' '}] ${match[2]}`
       } else {
-        lines[lineIndex] = `- [${done ? 'x' : ' '}] ${line.replace(/^\s*[-*+]\s+/, '')}`
+        lines[lineIndex] = `- [${done ? 'x' : ' '}] ${line.replace(/^\s*(?:[-*+•–—]|\d+\.)\s*/, '')}`
       }
     } else {
       let index = 0
       lines.forEach((line, i) => {
-        if (/^\s*[-*+]\s+\[([ xX])\]/.test(line)) {
+        if (taskRegex.test(line)) {
           if (index === lineIndex) {
-            lines[i] = line.replace(/^(\s*[-*+]\s+\[)[ xX](\])/, `$1${done ? 'x' : ' '}$2`)
+            const match = line.match(taskRegex)
+            lines[i] = `- [${done ? 'x' : ' '}] ${match ? match[2] : ''}`
           }
           index++
         }
@@ -2447,7 +2466,7 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
         <button className={showTrash ? 'active' : ''} onClick={() => { setShowAllNotes(true); setShowTrash(true); setShowArchived(false); setShowFavorites(false); setShowTasks(false) }}>Trash</button>
       </div>
       <div className="dn-page-heading">
-        <h1>{showTrash ? 'Trash' : showArchived ? 'Archived' : showTasks ? 'Tasks' : showFavorites ? 'Favorites' : showAllNotes ? 'All notes' : 'Page notes'} <span>{showTrash ? trash.length : showArchived ? allNotes.filter(({ note }) => note.archived).length : showTasks ? allNotes.filter(({ note }) => !note.archived && (/(?:^|\n)\s*[-*+]\s*\[([ xX])\]/.test(note.body) || note.category === 'todo')).length : showFavorites ? allNotes.filter(({ note }) => note.favorite && !note.archived).length : showAllNotes ? allNotes.filter(({ note }) => !note.archived).length : notes.filter((note) => !note.archived).length}</span></h1>
+        <h1>{showTrash ? 'Trash' : showArchived ? 'Archived' : showTasks ? 'Tasks' : showFavorites ? 'Favorites' : showAllNotes ? 'All notes' : 'Page notes'} <span>{showTrash ? trash.length : showArchived ? allNotes.filter(({ note }) => note.archived).length : showTasks ? allNotes.filter(({ note }) => !note.archived && (/(?:^|\n)\s*(?:(?:[-*+]|\d+\.)\s+)?\[\s*[xXvV]?\s*\]/.test(note.body) || note.category === 'todo')).length : showFavorites ? allNotes.filter(({ note }) => note.favorite && !note.archived).length : showAllNotes ? allNotes.filter(({ note }) => !note.archived).length : notes.filter((note) => !note.archived).length}</span></h1>
         <div className="dn-heading-actions">
           <select
             className="dn-template-select"
@@ -2588,33 +2607,37 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
           <article className="dn-editor">
             <div className="dn-editor-top">
               <div className="dn-editor-category-pills">
-                {(['general', 'todo', 'idea', 'remember', 'question'] as const).map((cat) => (
-                  <button
-                    key={cat}
-                    type="button"
-                    className={`dn-cat-pill dn-cat-${cat} ${selected.category === cat || (!selected.category && cat === 'general') ? 'active' : ''}`}
-                    onClick={() => {
-                      if (cat === 'todo') {
-                        const hasTasks = /(?:^|\n)\s*[-*+]\s*\[[ xX]\]/.test(selected.body)
-                        const initialBody = !selected.body.trim()
-                          ? '- [ ] '
-                          : hasTasks
-                            ? selected.body
-                            : selected.body
-                                .split('\n')
-                                .filter(Boolean)
-                                .map((line) => `- [ ] ${line.replace(/^[-*+•–—]\s*/, '')}`)
-                                .join('\n')
-                        updateSelected({ category: 'todo', body: initialBody })
-                      } else {
-                        updateSelected({ category: cat })
-                      }
-                    }}
-                  >
-                    <span className={`dn-cat-dot dn-cat-${cat}`} />
-                    {cat === 'general' ? 'Note' : cat === 'todo' ? 'To-do' : cat === 'idea' ? 'Idea' : cat === 'remember' ? 'Remember' : 'Question'}
-                  </button>
-                ))}
+                {(() => {
+                  const hasTasks = /(?:^|\n)\s*(?:(?:[-*+]|\d+\.)\s+)?\[\s*[xXvV]?\s*\]/.test(selected.body)
+                  const isTodo = selected.category === 'todo' || (hasTasks && (!selected.category || selected.category === 'general'))
+                  const activeCategory = isTodo ? 'todo' : (selected.category ?? 'general')
+                  return (['general', 'todo', 'idea', 'remember', 'question'] as const).map((cat) => (
+                    <button
+                      key={cat}
+                      type="button"
+                      className={`dn-cat-pill dn-cat-${cat} ${activeCategory === cat ? 'active' : ''}`}
+                      onClick={() => {
+                        if (cat === 'todo') {
+                          const initialBody = !selected.body.trim()
+                            ? '- [ ] '
+                            : hasTasks
+                              ? selected.body
+                              : selected.body
+                                  .split('\n')
+                                  .filter(Boolean)
+                                  .map((line) => `- [ ] ${line.replace(/^\s*(?:[-*+•–—]|\d+\.)\s*/, '')}`)
+                                  .join('\n')
+                          updateSelected({ category: 'todo', body: initialBody })
+                        } else {
+                          updateSelected({ category: cat })
+                        }
+                      }}
+                    >
+                      <span className={`dn-cat-dot dn-cat-${cat}`} />
+                      {cat === 'general' ? 'Note' : cat === 'todo' ? 'To-do' : cat === 'idea' ? 'Idea' : cat === 'remember' ? 'Remember' : 'Question'}
+                    </button>
+                  ))
+                })()}
               </div>
               <div className="dn-editor-actions">
                 <button type="button" className="dn-action-btn dn-action-close" onClick={() => setSelectedId(null)} title="Close note editor">Close</button>
@@ -2623,7 +2646,11 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
               </div>
             </div>
             <input className="dn-title" placeholder="Title (optional)" value={selected.title} onChange={(event) => updateNote('title', event.target.value)} />
-            {selected.category === 'todo' ? <TodoEditor body={selected.body} onChange={(body) => updateNote('body', body)} /> : <textarea className="dn-body" placeholder="Start writing…" value={selected.body} onChange={(event) => updateNote('body', event.target.value)} />}
+            {(selected.category === 'todo' || /(?:^|\n)\s*(?:(?:[-*+]|\d+\.)\s+)?\[\s*[xXvV]?\s*\]/.test(selected.body)) ? (
+              <TodoEditor body={selected.body} onChange={(body) => updateNote('body', body)} />
+            ) : (
+              <textarea className="dn-body" placeholder="Start writing…" value={selected.body} onChange={(event) => updateNote('body', event.target.value)} />
+            )}
             <TagInput key={selected.id} tags={selected.tags ?? []} onCommit={(tags) => updateNote('tags', tags)} />
             <div className="dn-editor-collections">
               <div className="dn-editor-collections-pills">
