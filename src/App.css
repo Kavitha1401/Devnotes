@@ -123,7 +123,7 @@ button {
   font-size: 24px;
   font-weight: 700;
   line-height: 1;
-  padding-left: 3px;
+  padding: 0;
 }
 
 .dn-mark span {
@@ -232,7 +232,7 @@ button {
   justify-content: center;
   width: 22px;
   height: 22px;
-  padding-left: 2px;
+  padding: 0;
   border-radius: 6px;
   background: var(--dn-bg);
   border: 1px solid var(--dn-border);
@@ -624,6 +624,25 @@ button {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.dn-template-select {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--dn-border);
+  border-radius: 5px;
+  background: var(--dn-surface);
+  color: var(--dn-text);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.15s ease;
+}
+
+.dn-template-select:hover,
+.dn-template-select:focus {
+  border-color: var(--dn-accent);
 }
 
 .dn-new {

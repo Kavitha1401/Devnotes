@@ -21,6 +21,34 @@ const SCHEMA_VERSION_KEY = 'devnotes-schema-version'
 const CURRENT_SCHEMA_VERSION = 1
 const isIncognitoContext = () => typeof chrome !== 'undefined' && Boolean(chrome.extension?.inIncognitoContext)
 
+const NOTE_TEMPLATES: Record<string, { title: string; body: string; category?: NoteCategory }> = {
+  'To-do list': {
+    title: 'To-do List',
+    category: 'todo',
+    body: '- [ ] First task\n- [ ] Second task\n- [ ] Third task',
+  },
+  'Reading note': {
+    title: 'Reading Note',
+    category: 'general',
+    body: 'Key Takeaways\n• \n\nImportant Quotes\n• \n\nMy Thoughts\n• \n\nAction Items\n• \n',
+  },
+  'Meeting notes': {
+    title: 'Meeting Notes',
+    category: 'general',
+    body: 'Date & Attendees\n• \n\nAgenda\n• \n\nDiscussion & Decisions\n• \n\nAction Items\n• \n',
+  },
+  'Bug report': {
+    title: 'Bug Report',
+    category: 'general',
+    body: 'Summary\n• \n\nSteps to Reproduce\n1. \n2. \n3. \n\nExpected Behavior\n• \n\nActual Behavior\n• \n',
+  },
+  'Research': {
+    title: 'Research Summary',
+    category: 'idea',
+    body: 'Objective\n• \n\nFindings & Insights\n• \n\nKey References\n• \n',
+  },
+} as const
+
 function stripMarkdownForUI(text: string): string {
   return text
     .replace(/^(\s*[-*+•–—]\s*(?:\[[ xX]?\]\s*)?|\s*\[[ xX]?\]\s*|#+\s+|>+\s*)/gm, '')
@@ -34,17 +62,25 @@ function cleanDisplayTitle(note: Note): string {
   if (note.title && note.title.trim()) {
     return stripMarkdownForUI(note.title)
   }
-  const firstLine = note.body.trim().split('\n')[0] ?? ''
+  const lines = note.body.trim().split('\n').filter(Boolean)
+  const firstLine = lines[0] ?? ''
   const cleaned = stripMarkdownForUI(firstLine).slice(0, 50)
-  return cleaned || 'Untitled note'
+  return cleaned || (note.category === 'todo' ? 'To-do item' : 'Untitled note')
 }
 
 function cleanDisplayPreview(note: Note): string {
+  if (note.category === 'todo' || /(?:^|\n)\s*[-*+]\s*\[[ xX]\]/.test(note.body)) {
+    const taskLines = note.body.split('\n').filter((l) => /^\s*[-*+]\s*\[[ xX]\]/.test(l))
+    if (taskLines.length > 0) {
+      const doneCount = taskLines.filter((l) => /^\s*[-*+]\s*\[[xX]\]/.test(l)).length
+      return `${doneCount} of ${taskLines.length} completed`
+    }
+  }
   const content = note.title && note.title.trim()
     ? note.body
     : note.body.trim().split('\n').slice(1).join(' ')
   const cleaned = stripMarkdownForUI(content).slice(0, 58)
-  return cleaned || 'No content yet'
+  return cleaned || (note.body.trim() ? stripMarkdownForUI(note.body).slice(0, 58) : 'No content yet')
 }
 function pruneTombstones(value: Record<string, number>): Record<string, number> {
   const cutoff = Date.now() - 180 * 24 * 60 * 60 * 1000
@@ -961,18 +997,43 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     return note.id
   }, [pages, persist, pageUrl])
 
-  const updateNote = (field: 'title' | 'body' | 'tags' | 'collectionIds', value: string | string[]) => {
+  const createFromTemplate = useCallback((templateName: keyof typeof NOTE_TEMPLATES) => {
+    const tmpl = NOTE_TEMPLATES[templateName]
+    if (!tmpl) return
+    const now = Date.now()
+    const note: Note = {
+      id: crypto.randomUUID(),
+      title: tmpl.title,
+      body: tmpl.body,
+      category: tmpl.category ?? 'general',
+      tags: [],
+      collectionIds: [],
+      pinned: false,
+      favorite: false,
+      archived: false,
+      createdAt: now,
+      updatedAt: now,
+    }
+    persist({ ...pages, [pageUrl]: [note, ...(pages[pageUrl] ?? [])] })
+    setSelectedPageUrl(pageUrl)
+    setSelectedId(note.id)
+  }, [pages, persist, pageUrl])
+
+  const updateSelected = (patch: Partial<Note>) => {
     if (!selected) return
     const history = selected.history ?? []
     const lastRevision = history[history.length - 1]
-    const shouldSnapshot = field !== 'tags' && field !== 'collectionIds' && (!lastRevision || Date.now() - lastRevision.savedAt > 30_000)
-    const updated: Note = field === 'tags'
-      ? { ...selected, tags: value as string[], updatedAt: Date.now() }
-      : field === 'collectionIds'
-        ? { ...selected, collectionIds: value as string[], updatedAt: Date.now() }
-        : { ...selected, [field]: value as string, updatedAt: Date.now() }
-    if (shouldSnapshot) updated.history = [...history, { id: crypto.randomUUID(), title: selected.title, body: selected.body, savedAt: Date.now() }].slice(-settings.historyDepth)
+    const bodyChanged = 'body' in patch && patch.body !== selected.body
+    const shouldSnapshot = bodyChanged && (!lastRevision || Date.now() - lastRevision.savedAt > 30_000)
+    const updated: Note = { ...selected, ...patch, updatedAt: Date.now() }
+    if (shouldSnapshot) {
+      updated.history = [...history, { id: crypto.randomUUID(), title: selected.title, body: selected.body, savedAt: Date.now() }].slice(-settings.historyDepth)
+    }
     persist({ ...pages, [selectedPageUrl]: selectedNotes.map((note) => note.id === selected.id ? updated : note) })
+  }
+
+  const updateNote = (field: 'title' | 'body' | 'tags' | 'collectionIds', value: string | string[]) => {
+    updateSelected({ [field]: value } as Partial<Note>)
   }
 
   const deleteNote = (noteId?: string, noteUrl?: string) => {
@@ -1050,11 +1111,6 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
     const rank = (note: Note, url: string) => parsed.terms.reduce((score, term) => score + (note.title.toLowerCase().includes(term) ? 8 : note.body.toLowerCase().includes(term) ? 4 : safeHostname(url).toLowerCase().includes(term) ? 3 : 1), 0)
     return matches.sort((a, b) => Number(Boolean(b.note.pinned)) - Number(Boolean(a.note.pinned)) || (parsed.terms.length ? rank(b.note, b.url) - rank(a.note, a.url) : sortMode === 'title' ? a.note.title.localeCompare(b.note.title) : sortMode === 'created' ? b.note.createdAt - a.note.createdAt : b.note.updatedAt - a.note.updatedAt))
   }, [allNotes, notes, pageUrl, deferredQuery, showAllNotes, collectionFilter, showArchived, showFavorites, showTasks, domainFilter, sortMode, categoryFilter])
-
-  const updateSelected = (patch: Partial<Note>) => {
-    if (!selected) return
-    persist({ ...pages, [selectedPageUrl]: selectedNotes.map((note) => note.id === selected.id ? { ...note, ...patch, updatedAt: Date.now() } : note) })
-  }
 
   useEffect(() => {
     let frame = 0
@@ -2393,6 +2449,22 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
       <div className="dn-page-heading">
         <h1>{showTrash ? 'Trash' : showArchived ? 'Archived' : showTasks ? 'Tasks' : showFavorites ? 'Favorites' : showAllNotes ? 'All notes' : 'Page notes'} <span>{showTrash ? trash.length : showArchived ? allNotes.filter(({ note }) => note.archived).length : showTasks ? allNotes.filter(({ note }) => !note.archived && (/(?:^|\n)\s*[-*+]\s*\[([ xX])\]/.test(note.body) || note.category === 'todo')).length : showFavorites ? allNotes.filter(({ note }) => note.favorite && !note.archived).length : showAllNotes ? allNotes.filter(({ note }) => !note.archived).length : notes.filter((note) => !note.archived).length}</span></h1>
         <div className="dn-heading-actions">
+          <select
+            className="dn-template-select"
+            defaultValue=""
+            aria-label="Create note from template"
+            onChange={(e) => {
+              if (e.target.value) {
+                createFromTemplate(e.target.value as keyof typeof NOTE_TEMPLATES)
+                e.target.value = ''
+              }
+            }}
+          >
+            <option value="" disabled>Template…</option>
+            {Object.keys(NOTE_TEMPLATES).map((tmpl) => (
+              <option key={tmpl} value={tmpl}>{tmpl}</option>
+            ))}
+          </select>
           <button className="dn-new" onClick={() => createNote()}>+ New note</button>
         </div>
       </div>
@@ -2522,9 +2594,20 @@ function App({ messageTarget = window }: { messageTarget?: EventTarget }) {
                     type="button"
                     className={`dn-cat-pill dn-cat-${cat} ${selected.category === cat || (!selected.category && cat === 'general') ? 'active' : ''}`}
                     onClick={() => {
-                      updateSelected({ category: cat })
-                      if (cat === 'todo' && !selected.body.trim()) {
-                        updateNote('body', '- [ ] ')
+                      if (cat === 'todo') {
+                        const hasTasks = /(?:^|\n)\s*[-*+]\s*\[[ xX]\]/.test(selected.body)
+                        const initialBody = !selected.body.trim()
+                          ? '- [ ] '
+                          : hasTasks
+                            ? selected.body
+                            : selected.body
+                                .split('\n')
+                                .filter(Boolean)
+                                .map((line) => `- [ ] ${line.replace(/^[-*+•–—]\s*/, '')}`)
+                                .join('\n')
+                        updateSelected({ category: 'todo', body: initialBody })
+                      } else {
+                        updateSelected({ category: cat })
                       }
                     }}
                   >

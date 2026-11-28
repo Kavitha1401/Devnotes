@@ -16,13 +16,12 @@ function renderInline(text: string) {
   return text.split(/(\*\*[^*]+\*\*)/g).map((part, index) => part.length > 4 && part.startsWith('**') && part.endsWith('**') ? <b key={index}>{part.slice(2, -2)}</b> : part)
 }
 
-function CardBody({ body, category, editing, onChange, onEditingChange, onToggleTask }: {
+function CardBody({ body, category, editing, onChange, onEditingChange }: {
   body: string
   category?: NoteCategory
   editing: boolean
   onChange: (text: string) => void
   onEditingChange: (editing: boolean) => void
-  onToggleTask: (taskIndex: number, done: boolean) => void
 }) {
   const ref = useRef<HTMLTextAreaElement>(null)
   const [draft, setDraft] = useState(body)
@@ -61,7 +60,6 @@ function CardBody({ body, category, editing, onChange, onEditingChange, onToggle
     const newBody = lines.join('\n')
     setDraft(newBody)
     onChange(newBody)
-    onToggleTask(lineIndex, nextDone)
   }
 
   if (reading) {
@@ -134,7 +132,7 @@ export function AnnotationCard({
   onChange,
   onCategoryChange,
   onEditingChange,
-  onToggleTask,
+  onToggleTask: _onToggleTask,
   onOpen,
   onRemove,
   onMove,
@@ -253,6 +251,6 @@ export function AnnotationCard({
     {title && title.trim() ? (
       <div className="dn-card-title">{title.trim()}</div>
     ) : null}
-    <CardBody body={body} category={currentCategory} editing={editing} onChange={onChange} onEditingChange={onEditingChange} onToggleTask={onToggleTask} />
+    <CardBody body={body} category={currentCategory} editing={editing} onChange={onChange} onEditingChange={onEditingChange} />
   </section>
 }

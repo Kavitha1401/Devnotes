@@ -21,7 +21,7 @@ export function TodoEditor({
         list.push({ done: false, text: line.replace(/^\s*[-*+]\s+/, '') })
       }
     }
-    return list
+    return list.length ? list : [{ done: false, text: '' }]
   }, [body])
 
   const updateTask = (itemIndex: number, newDone: boolean, newText: string) => {
@@ -31,13 +31,14 @@ export function TodoEditor({
 
   const deleteTask = (itemIndex: number) => {
     const updated = tasks.filter((_, i) => i !== itemIndex)
-    onChange(updated.map((t) => `- [${t.done ? 'x' : ' '}] ${t.text}`).join('\n'))
+    onChange(updated.length ? updated.map((t) => `- [${t.done ? 'x' : ' '}] ${t.text}`).join('\n') : '- [ ] ')
   }
 
   const addTask = (text: string) => {
     const trimmed = text.trim()
     if (!trimmed) return
-    const updated = [...tasks, { done: false, text: trimmed }]
+    const activeTasks = tasks.filter((t) => t.text.trim())
+    const updated = [...activeTasks, { done: false, text: trimmed }]
     onChange(updated.map((t) => `- [${t.done ? 'x' : ' '}] ${t.text}`).join('\n'))
     setNewTaskText('')
   }
@@ -95,7 +96,7 @@ export function TodoEditor({
                     e.preventDefault()
                     const updated = [...tasks.slice(0, i + 1), { done: false, text: '' }, ...tasks.slice(i + 1)]
                     onChange(updated.map((t) => `- [${t.done ? 'x' : ' '}] ${t.text}`).join('\n'))
-                  } else if (e.key === 'Backspace' && !task.text) {
+                  } else if (e.key === 'Backspace' && !task.text && tasks.length > 1) {
                     e.preventDefault()
                     deleteTask(i)
                   }
